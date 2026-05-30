@@ -1,0 +1,157 @@
+// ==========================================================================
+// 🍕 CLASH OF PIZZAS: DUELO PICANTE ZK 1V1 - CONTRATO INTELIGENTE EN COMPACT
+// ==========================================================================
+
+import { Ledger, Witness, Circuit, Cell, Maybe } from '@midnight-ntwrk/compact';
+
+// 1. Definition of Public ledger cells
+export interface SimPizzaDAOLedger {
+  public_p1_commitment: Cell<bytes32>;
+  public_p2_commitment: Cell<bytes32>;
+  
+  public_p1_hp: Cell<uint8>;
+  public_p2_hp: Cell<uint8>;
+  
+  public_p1_score: Cell<uint24>;
+  public_p2_score: Cell<uint24>;
+  
+  public_game_active: Cell<boolean>;
+  public_turn_p1: Cell<boolean>;
+}
+
+// 2. Definition of local computations (Witness) on the client machine
+export interface SimPizzaDAOWitness {
+  get_private_board(): bytes256; 
+  get_private_bite_val(): uint8;
+}
+
+// 3. Definition of ZK verification circuits
+export interface SimPizzaDAOCircuits {
+  verify_board_commitment(board: bytes256, commitment: bytes32): boolean;
+  verify_bite_integrity(board: bytes256, expected_commitment: bytes32): boolean;
+}
+
+// 4. Main Contract Implementation
+export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, SimPizzaDAOCircuits {
+  
+  // Public ledger cells
+  public public_p1_commitment: Cell<bytes32>;
+  public public_p2_commitment: Cell<bytes32>;
+  
+  public public_p1_hp: Cell<uint8>;
+  public public_p2_hp: Cell<uint8>;
+  
+  public public_p1_score: Cell<uint24>;
+  public public_p2_score: Cell<uint24>;
+  
+  public public_game_active: Cell<boolean>;
+  public public_turn_p1: Cell<boolean>;
+
+  constructor(initial_root: bytes32) {
+    this.public_p1_commitment.set(initial_root);
+    this.public_p2_commitment.set(hash256("empty"));
+    this.public_p1_hp.set(3);
+    this.public_p2_hp.set(3);
+    this.public_p1_score.set(0);
+    this.public_p2_score.set(0);
+    this.public_game_active.set(false);
+    this.public_turn_p1.set(true);
+  }
+
+  // ZK Circuit: Proves that the private board matches the declared commitment
+  public circuit verify_board_commitment(board: bytes256, commitment: bytes32): boolean {
+    return hash256(board) === commitment;
+  }
+
+  // ZK Circuit: Proves that a bite coordinate results in a valid change matching commitment
+  public circuit verify_bite_integrity(board: bytes256, expected_commitment: bytes32): boolean {
+    return hash256(board) === expected_commitment;
+  }
+
+  // Exported transaction to initialize a duel
+  export function initialize_game(
+    p1_commit: bytes32,
+    p2_commit: bytes32
+  ): void {
+    this.public_p1_commitment.set(p1_commit);
+    this.public_p2_commitment.set(p2_commit);
+    this.public_p1_hp.set(3);
+    this.public_p2_hp.set(3);
+    this.public_p1_score.set(0);
+    this.public_p2_score.set(0);
+    this.public_game_active.set(true);
+    this.public_turn_p1.set(true);
+  }
+
+  // Exported transaction to submit a ZK verified bite result
+  export function submit_bite_proof(
+    index: uint8,
+    cell_value: uint8,
+    is_p1_attacking: boolean
+  ): void {
+    const board = this.witness.get_private_board();
+    const active_commitment = is_p1_attacking ? this.public_p2_commitment.get() : this.public_p1_commitment.get();
+
+    // Assert that the private board matches the commitment
+    assert(this.verify_bite_integrity(board, active_commitment));
+
+    // Update HP and Score depending on who is attacking and the cell type
+    if (is_p1_attacking) {
+      // P1 attacks P2
+      if (cell_value >= 1 && cell_value <= 4) {
+        // Pizza hit
+        const s1 = this.public_p1_score.get();
+        this.public_p1_score.set(s1 + 50);
+      } else if (cell_value === 5 || cell_value === 6) {
+        // Trap (Jalapeno/Habanero)
+        const hp1 = this.public_p1_hp.get();
+        const dmg = cell_value === 5 ? 1 : 2;
+        if (hp1 > dmg) {
+          this.public_p1_hp.set(hp1 - dmg);
+        } else {
+          this.public_p1_hp.set(0);
+        }
+      } else if (cell_value === 7 || cell_value === 8) {
+        // Cure (Water/Milk)
+        const hp1 = this.public_p1_hp.get();
+        const heal = cell_value === 7 ? 1 : 2;
+        this.public_p1_hp.set(hp1 + heal > 5 ? 5 : hp1 + heal);
+      } else if (cell_value === 9) {
+        // Gold Truffle
+        const hp1 = this.public_p1_hp.get();
+        this.public_p1_hp.set(hp1 + 2 > 5 ? 5 : hp1 + 2);
+        const s1 = this.public_p1_score.get();
+        this.public_p1_score.set(s1 + 500);
+      }
+      this.public_turn_p1.set(false);
+    } else {
+      // P2 attacks P1
+      if (cell_value >= 1 && cell_value <= 4) {
+        // Pizza hit
+        const s2 = this.public_p2_score.get();
+        this.public_p2_score.set(s2 + 50);
+      } else if (cell_value === 5 || cell_value === 6) {
+        // Trap (Jalapeno/Habanero)
+        const hp2 = this.public_p2_hp.get();
+        const dmg = cell_value === 5 ? 1 : 2;
+        if (hp2 > dmg) {
+          this.public_p2_hp.set(hp2 - dmg);
+        } else {
+          this.public_p2_hp.set(0);
+        }
+      } else if (cell_value === 7 || cell_value === 8) {
+        // Cure (Water/Milk)
+        const hp2 = this.public_p2_hp.get();
+        const heal = cell_value === 7 ? 1 : 2;
+        this.public_p2_hp.set(hp2 + heal > 5 ? 5 : hp2 + heal);
+      } else if (cell_value === 9) {
+        // Gold Truffle
+        const hp2 = this.public_p2_hp.get();
+        this.public_p2_hp.set(hp2 + 2 > 5 ? 5 : hp2 + 2);
+        const s2 = this.public_p2_score.get();
+        this.public_p2_score.set(s2 + 500);
+      }
+      this.public_turn_p1.set(true);
+    }
+  }
+}

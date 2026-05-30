@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clash of Pizzas: Spicy Challenge 🍕🌶️</title>
+  <!-- Google Fonts: Outfit & Orbitron for eSports typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+
+  <!-- Cinematic Entry Landing Portal Page -->
+  <div class="landing-overlay" id="landingOverlay">
+    <div class="landing-content">
+      <div class="landing-badge">🔥 MIDNIGHT ZK ARENA 🔥</div>
+      <h1 class="landing-title">CLASH OF PIZZAS</h1>
+      <h2 class="landing-subtitle">Spicy Challenge</h2>
+      <p class="landing-description">
+        Ingresa a un universo descentralizado donde las pizzas son secretas y los mordiscos son auditados en tiempo real en la blockchain L2 Midnight mediante pruebas de conocimiento cero (ZK Proofs).
+      </p>
+      <button class="landing-btn" id="btnEnterUniverse">INGRESAR AL UNIVERSO ⚔️</button>
+      <div class="landing-footer">PIZZADAO • SHIELDED CRYPTO BOARD GAME</div>
+    </div>
+  </div>
+
+  <!-- Premium Glassmorphic Cyberpunk Arena Cockpit -->
+  <div class="arena-dashboard">
+    <!-- Top HUD Bar -->
+    <header class="top-hud">
+      <div class="hud-brand">
+        <span class="hud-emoji">🍕</span>
+        <div class="hud-title-block">
+          <h1>CLASH OF PIZZAS</h1>
+          <span class="hud-subtitle">Spicy Challenge • Midnight ZK L2 Arena</span>
+        </div>
+        <button class="console-btn" id="btnOpenManual" style="margin-left: 20px; padding: 6px 14px; font-size: 10px; background: rgba(251, 191, 36, 0.1); border: 2px solid var(--neon-gold); color: var(--neon-gold); font-family: 'Orbitron'; cursor: pointer; border-radius: 8px; font-weight: 800; animation: pulseAlert 2.5s infinite;">💡 REGLAS DEL JUEGO</button>
+        <button class="console-btn" id="btnConnectWallet" style="margin-left: 10px; padding: 6px 14px; font-size: 10px; background: rgba(99, 102, 241, 0.1); border: 2px solid #6366f1; color: #a5b4fc; font-family: 'Orbitron'; cursor: pointer; border-radius: 8px; font-weight: 800; width: auto; box-shadow: 0 0 10px rgba(99, 102, 241, 0.25); display: inline-block;">🔑 CONECTAR WALLET</button>
+      </div>
+
+      <!-- eSports Telemetry Metrics Panel -->
+      <div class="hud-metrics">
+        <div class="metric-card">
+          <span class="metric-label">CHEF SCORE</span>
+          <div class="metric-value-container">
+            <span class="metric-value" id="chefScoreText">0</span>
+            <span class="metric-unit">PTS</span>
+          </div>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">GAS FEE</span>
+          <div class="metric-value-container">
+            <span class="metric-value">0.00</span>
+            <span class="metric-unit">tDUST</span>
+          </div>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">ZK PRIVACY</span>
+          <div class="metric-value-container">
+            <span class="metric-value" style="color: var(--neon-green);">SHIELDED</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-global-status" style="font-size: 11px; font-family: var(--font-orbitron); color: #64748b;">
+        NETWORK: <span style="color: var(--neon-green); font-weight:bold;">MIDNIGHT_L2 (24ms)</span>
+      </div>
+    </header>
+
+    <!-- Horizontal Combat Control Center (Top Docked & 100% Mobile Visible) -->
+    <div class="combat-control-center">
+      <div id="matchmakingConsole" style="width: 100%;">
+        <!-- Managed dynamically via JS -->
+      </div>
+    </div>
+
+    <!-- Middle Arena Body Container (Flexbox side-by-side row) -->
+    <div class="middle-arena-row">
+      <!-- Main battlefield split panels -->
+      <main class="battlefield-container">
+        <!-- Tablero Izquierdo (Mi Mesa Secreta - Defensa) -->
+        <div class="board-card player-board">
+          <div class="board-header">
+            <div class="board-title-block">
+              <h3>🛡️ MI MESA SECRETA</h3>
+              <span class="board-subtitle">Tus pizzas y trampas activas</span>
+            </div>
+            <div class="heart-lives-row" id="playerHearts">
+              <!-- Animated hearts rendered dynamically -->
+            </div>
+          </div>
+          <div id="playerInventoryBar" class="inventory-bar" style="display: none;"></div>
+          <div class="grid-board" id="playerGridBoard"></div>
+          <div class="board-footer">
+          <span class="score-badge">SCORE: <strong id="playerScoreText">0</strong> PTS</span>
+          <button class="console-btn" id="btnShuffleBoard" style="width: auto; margin: 0; padding: 4px 12px; font-size: 8px; border-radius: 6px; display: none; background: linear-gradient(180deg, var(--neon-gold), #b45309);">🎲 MEZCLAR</button>
+          <span id="playerImmunity" class="immunity-badge" style="display:none;">🛡️ INMUNE</span>
+        </div>
+        </div>
+
+        <!-- Tablero Derecho (Mesa del Rival - Ataque) -->
+        <div class="board-card rival-board">
+          <div class="board-header">
+            <div class="board-title-block">
+              <h3>⚔️ MESA DEL RIVAL</h3>
+              <span class="board-subtitle">¡Muerde las campanas de plata!</span>
+            </div>
+            <div class="heart-lives-row" id="rivalHearts">
+              <!-- Rival hearts rendered dynamically -->
+            </div>
+          </div>
+          <div class="grid-board" id="rivalGridBoard"></div>
+          <div class="board-footer">
+            <span class="score-badge">SCORE: <strong id="rivalScoreText">0</strong> PTS</span>
+            <span id="rivalImmunity" class="immunity-badge" style="display:none;">🛡️ INMUNE</span>
+          </div>
+        </div>
+      </main>
+
+      <!-- Sidebar Cockpit Controls -->
+      <aside class="sidebar-hud">
+        <div class="sidebar-hud-overhauled" style="display: flex; flex-direction: column; gap: 15px; height: 100%; font-family: var(--font-outfit);">
+          <!-- Tabs Navigation -->
+          <div class="construction-tabs" style="display: flex; background: rgba(0,0,0,0.4); padding: 3px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06);">
+            <button class="tab-btn active" id="tabBtnAmigos" style="flex:1;">👥 SOCIAL</button>
+            <button class="tab-btn" id="tabBtnZK" style="flex:1;">🔐 LEDGER ZK</button>
+          </div>
+
+          <!-- Tab Panel: SOCIAL -->
+          <div id="panelAmigos" class="tab-panel active" style="display: flex; flex-direction: column; gap: 12px;">
+            <h2 class="section-title">AMIGOS & DESAFÍOS</h2>
+            <div class="midnight-console" style="padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+              <div style="display: flex; gap: 6px;">
+                <input type="text" id="addFriendInput" placeholder="Nombre de chef..." style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08); color: #fff; padding: 6px 10px; border-radius: 8px; flex:1; font-family: var(--font-outfit); font-size: 11px;">
+                <button class="console-btn" id="btnAddFriend" style="padding: 6px 12px; font-size: 10px; width: auto; border-radius: 8px; box-shadow: none; margin:0;">AGREGAR</button>
+              </div>
+            </div>
+            <div id="friendsListContainer" style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto; padding-right: 4px;">
+              <!-- Managed dynamically via JS -->
+            </div>
+          </div>
+
+          <!-- Tab Panel: LEDGER ZK -->
+          <div id="panelZK" class="tab-panel" style="display: none; flex-direction: column; gap: 12px;">
+            <h2 class="section-title">CONTRATO COMPACT & AUDITOR</h2>
+            <div class="midnight-console" style="padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+              <div class="console-row">
+                <span>LEDGER BLOCKCHAIN:</span>
+                <span class="status-badge status-green" style="box-shadow:none;">SHIELDED BOARD</span>
+              </div>
+              <div class="console-row" style="display: flex; flex-direction: column; align-items: flex-start; gap: 3px;">
+                <span>BOARD RAÍZ COMMITMENT:</span>
+                <span class="console-hash" id="merkleRoot" style="font-size: 9px; word-break: break-all;">mr_0x85f19c2...b8a</span>
+              </div>
+
+              <!-- Compact Code Viewer Component -->
+              <div class="proposal-title" style="color: var(--neon-gold); font-size: 10px; font-weight: bold; font-family: 'Orbitron'; margin-top: 5px;">CÓDIGO COMPACT EN TIEMPO REAL</div>
+              <div id="compactCodeViewer" style="font-family: monospace; font-size: 8.5px; background: #0c0603; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); max-height: 180px; overflow-y: auto; color: #a8a29e; line-height: 1.4; text-align: left; position: relative;">
+                <!-- Rendered and highlighted dynamically -->
+              </div>
+
+              <div id="zkProofLogContainer" style="font-family: monospace; font-size: 9px; color: #60a5fa; background: #0c0603; padding: 10px; border-radius: 8px; display: none; max-height: 100px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); line-height: 1.4;">
+                <!-- ZK Proof generation logs -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Bottom Ledger & Feed Terminal -->
+    <footer class="bottom-terminal">
+      <div class="terminal-header">
+        <span class="terminal-dot red"></span>
+        <span class="terminal-dot yellow"></span>
+        <span class="terminal-dot green"></span>
+        <span class="terminal-title">CONSOLA CRIPTOGRÁFICA DE MIDNIGHT LEDGER</span>
+        <span class="terminal-timer" id="terminalTimer">00:00:00</span>
+      </div>
+      <div class="terminal-body" id="consoleBody">
+        <div class="log-line system">&gt;&gt;&gt; Inicializando arena de Clash of Pizzas: Spicy Challenge...</div>
+        <div class="log-line system">&gt;&gt;&gt; Sincronizando Shielded Board local en la red descentralizada Midnight.</div>
+        <div class="log-line info">&gt;&gt;&gt; Bienvenido, Pizzaiolo. Coloca tus chiles trampa, desafía a tus amigos y devora sus pizzas.</div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Dynamic Game Manual Modal -->
+  <div class="modal-overlay" id="manualModal">
+    <div class="modal-card" style="width: 550px; max-height: 85vh; overflow-y: auto; background: linear-gradient(135deg, #111827, #030712); border: 2px solid var(--neon-gold); border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.8);">
+      <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.08); padding: 15px 25px; display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-family: 'Orbitron'; color: var(--neon-gold); font-weight: 900; font-size: 14px; margin: 0;">💡 REGLAS DE SPICY CHALLENGE</h2>
+        <button class="modal-close-btn" id="btnCloseManual" style="color: var(--neon-gold); font-size: 24px; cursor: pointer;">×</button>
+      </div>
+      <div class="modal-body" style="text-align: left; display: flex; flex-direction: column; gap: 15px; padding: 25px; font-size: 11.5px; color: #cbd5e1; line-height: 1.5;">
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px;">
+          <p><strong>1. Posiciones Secretas:</strong> Cada chef dispone sus pizzas y chiles de forma secreta en una grilla de 6x6. Nadie puede ver el tablero del otro al comenzar.</p>
+          <p style="margin-top: 6px;"><strong>2. Las Pizzas:</strong> Margherita (1x1), Pepperoni (1x2), Suprema (2x2) y la gigantesca <strong>Pizza Gigante de 5 casillas en largo</strong>.</p>
+          <p style="margin-top: 6px;"><strong>3. Daño de Devastación:</strong> Si consigues comerte una pizza rival completa, asestarás un golpe directo a su vida. ¡Terminar la pizza Gigante le quita -3 HP!</p>
+          <p style="margin-top: 6px;"><strong>4. Chiles y Curas:</strong> El Jalapeño te quita -1 HP y el Habanero -2 HP. Bebe Agua (+1 HP) o Leche (+2 HP) para aliviarte, o desentierra la Trufa de Oro para obtener +500 pts e inmunidad de escudos.</p>
+        </div>
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 12px; font-family: monospace; font-size: 9.5px; color: #60a5fa;">
+          // Midnight ZK Security
+          // El contrato inteligente Compact encripta tu tablero mediante un Merkle Root hash.
+          // Al recibir un ataque, tu cliente genera una prueba de conocimiento cero (ZK Proof)
+          // que valida el ingrediente real de forma blindada, asegurando que nadie pueda
+          // hacer trampas onchain sin exponer sus otras posiciones.
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: flex-end;">
+        <button class="modal-action-btn" id="btnConfirmManual" style="padding: 10px 20px; font-family: 'Orbitron'; font-size: 11px;">¡A COMBATIR!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pulsating Cyberpunk Match Start Countdown Overlay -->
+  <div id="matchCountdownOverlay" class="match-countdown-overlay" style="display: none;">
+    <div class="countdown-title">🤝 ¡RETADOR ENCONTRADO! 🤝</div>
+    <div class="countdown-number">3</div>
+    <div class="countdown-subtext">SINCRONIZANDO COMPROMISOS EN MIDNIGHT L2...</div>
+  </div>
+
+  <!-- Cinematic Battle Announcement Overlay -->
+  <div id="battleAnnouncementOverlay" class="battle-announcement-overlay" style="display: none;">
+    <div class="announcement-title">⚔️ ¡COMIENZA LA BATALLA! ⚔️</div>
+    <div class="announcement-subtitle">Muerde las campanas del rival y protege tu mesa</div>
+  </div>
+
+  <!-- Holographic Rage-Quit Grace Countdown Overlay -->
+  <div id="forfeitCountdownOverlay" class="match-countdown-overlay" style="display: none; background: rgba(185, 28, 28, 0.82); border: 2px solid #ef4444;">
+    <div class="countdown-title" style="text-shadow: 0 0 20px #ef4444, 0 0 40px #ef4444;">⚠️ OPONENTE DESCONECTADO ⚠️</div>
+    <div class="countdown-number" style="color: #ef4444; text-shadow: 0 0 35px #ef4444, 0 0 70px #ef4444;">15</div>
+    <div class="countdown-subtext" style="color: #fca5a5; text-shadow: 0 0 8px rgba(239, 68, 68, 0.4);">ESPERANDO RECONEXIÓN (SERVIDOR TESTIGO EN ESPERA)...</div>
+  </div>
+
+  <!-- Premium Web3 Settlement and Claim Rewards Modal -->
+  <div class="modal-overlay" id="web3ClaimModal" style="display: none;">
+    <div class="modal-card" style="width: 480px; background: linear-gradient(135deg, #0f172a, #020617); border: 2px solid var(--neon-gold); border-radius: 20px; box-shadow: 0 15px 50px rgba(0,0,0,0.85); position:relative;">
+      <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.08); padding: 15px 25px; display: flex; justify-content: space-between; align-items: center;">
+        <h2 style="font-family: 'Orbitron'; color: var(--neon-gold); font-weight: 900; font-size: 13px; margin: 0; letter-spacing: 0.5px;">⚖️ MESA DE LIQUIDACIÓN CRIPTOGRÁFICA</h2>
+        <button class="modal-close-btn" id="btnCloseClaim" style="color: var(--neon-gold); font-size: 24px; cursor: pointer; background:none; border:none;">×</button>
+      </div>
+      <div class="modal-body" style="text-align: left; padding: 25px; font-size: 11px; color: #cbd5e1; line-height: 1.5; display:flex; flex-direction:column; gap:16px;">
+        <div style="text-align:center; padding: 10px 0;">
+          <span style="font-size:38px; animation: pulseAlert 1.5s infinite;">🏆</span>
+          <h3 style="font-family:'Orbitron'; color:#10b981; font-size:15px; margin: 8px 0 2px 0; font-weight:900;">¡VICTORIA CERTIFICADA!</h3>
+          <p style="color:#94a3b8; font-size:9.5px; font-family:'Orbitron';">Midnight L2 State Ledger Oracle Audit: OK</p>
+        </div>
+
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 14px; display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Score final del chef:</span>
+            <strong style="color:#fff;" id="claimScoreText">0 PTS</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Bono por victoria:</span>
+            <strong style="color:#10b981;">+100 Trufas</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:6px; margin-top:2px;">
+            <span style="font-family:'Orbitron'; font-weight:bold; color:var(--neon-gold);">RECOMPENSA DE TRUFAS DE ORO:</span>
+            <strong style="color:var(--neon-gold); font-family:'Orbitron'; font-size:13px;" id="claimRewardText">0 Trufas</strong>
+          </div>
+        </div>
+
+        <div style="background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.04); border-radius: 12px; padding: 14px; display:flex; flex-direction:column; gap:8px; font-family:monospace; font-size:9px; color:#60a5fa; word-break:break-all;">
+          <div><span style="color:#94a3b8;">COMMITMENT MERKLE ROOT:</span> <br><span id="claimMerkleText">mr_0x00</span></div>
+          <div style="border-top:1px solid rgba(255,255,255,0.04); padding-top:6px; margin-top:2px;" id="claimWitnessRow">
+            <span style="color:#94a3b8;">WITNESS ORACLE CERTIFICATE (HEX):</span> <br><span id="claimWitnessText">0x00</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 15px 25px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size:9px; color:#94a3b8; font-family:'Orbitron';">GAS FEE: <strong style="color:#fff;">0.02 tDUST</strong></span>
+        <button class="modal-action-btn" id="btnSignClaim" style="padding: 10px 20px; font-family: 'Orbitron'; font-size: 11px; background: linear-gradient(180deg, var(--neon-gold), #b45309); box-shadow: 0 0 10px rgba(251, 191, 36, 0.4); border-radius: 8px;">LIQUIDAR EN MIDNIGHT 🔑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simulated Midnight Wallet Popup -->
+  <div class="modal-overlay" id="midnightWalletModal" style="display: none; z-index: 3000;">
+    <div class="modal-card" style="width: 380px; background: #0b0f19; border: 2px solid #6366f1; border-radius: 16px; box-shadow: 0 15px 45px rgba(0,0,0,0.9); font-family: sans-serif; position:relative;">
+      <div style="background: #111827; padding: 12px 20px; border-bottom: 1px solid #1f2937; display:flex; align-items:center; gap:8px;">
+        <span style="font-size:18px;">🔑</span>
+        <h3 style="color:#fff; font-size:12.5px; margin:0; font-family:'Orbitron'; font-weight:900; letter-spacing:0.5px;">MIDNIGHT SHIELDED WALLET</h3>
+      </div>
+      <div style="padding: 20px; text-align: left; display:flex; flex-direction:column; gap:12px; font-size:11px; color:#cbd5e1;">
+        <div style="background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 10px; padding: 12px; display:flex; flex-direction:column; gap:6px;">
+          <div style="font-size:10px; color:#a5b4fc; font-weight:bold; letter-spacing:0.5px; font-family:'Orbitron';">TRANSACTION SIGNATURE REQUEST</div>
+          <div>Contract Method: <strong style="color:#fff;">liquidate_game_truffles()</strong></div>
+          <div>Gas Fee: <strong style="color:#fff;">0.02 tDUST</strong></div>
+          <div style="border-top: 1px solid rgba(99,102,241,0.1); padding-top:6px; margin-top:2px;">
+            Target Reward: <strong style="color:var(--neon-gold);" id="walletTruffleReward">+0 Trufas</strong>
+          </div>
+        </div>
+        <div style="font-size:9.5px; color:#94a3b8; line-height:1.4;">
+          Esta firma generará una prueba ZK local para verificar de forma privada tus resultados de juego y acuñar las Trufas de Oro directamente en tu cuenta de forma 100% blindada (Shielded).
+        </div>
+      </div>
+      <div style="padding: 12px 20px; background: #0f172a; border-top: 1px solid #1f2937; display: flex; justify-content: flex-end; gap:10px;">
+        <button class="console-btn btn-secondary" id="btnCancelWallet" style="width:auto; margin:0; padding:6px 12px; font-size:10px; border-radius:6px; font-family:'Orbitron';">RECHAZAR</button>
+        <button class="console-btn" id="btnApproveWallet" style="width:auto; margin:0; padding:6px 16px; font-size:10px; border-radius:6px; background:#6366f1; border-color:#6366f1; color:#fff; font-family:'Orbitron';">APROBAR FIRMA</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
