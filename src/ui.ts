@@ -84,6 +84,28 @@ export class PizzeriaUI {
         this.handleConnectWalletClick();
       });
     }
+
+    // P2P Challenge Copy button listener
+    const btnCopyP2P = document.getElementById('btnCopyP2PLink');
+    if (btnCopyP2P) {
+      btnCopyP2P.addEventListener('click', () => {
+        this.handleCopyP2PLinkClick();
+      });
+    }
+
+    // Detect P2P challenge in URL on startup
+    const urlParams = new URLSearchParams(window.location.search);
+    const challenge = urlParams.get('challenge');
+    if (challenge) {
+      setTimeout(() => {
+        this.log('🚨 ¡RETO P2P DETECTADO DESDE LA URL! 🚨', 'system');
+        this.log(`🏢 Compromiso del Rival ZK: ${challenge}`, 'info');
+        this.log('💡 Conectando tu Lace Wallet automáticamente para unirte al duelo...', 'info');
+        this.handleConnectWalletClick().then(() => {
+          this.log('🤝 ¡Listo! Selecciona tu pizza y presiona "EMPEZAR" para retar on-chain.', 'success');
+        });
+      }, 1500);
+    }
     
     // Enter Universe landing portal transition
     const btnEnter = document.getElementById('btnEnterUniverse')!;
@@ -1294,6 +1316,39 @@ export class PizzeriaUI {
         this.updateWalletUI();
       }
     }
+  }
+
+  private handleCopyP2PLinkClick(): void {
+    PizzeriaAudio.playCoin();
+    
+    // Obtener el compromiso de la pizza del jugador actual en vivo
+    const commitment = this.latestState?.playerCommitment || 'mr_0xmockpizza1234567';
+    const url = `${window.location.origin}${window.location.pathname}?challenge=${commitment}`;
+    
+    navigator.clipboard.writeText(url).then(() => {
+      this.log(`🔗 Enlace de Reto P2P copiado al portapapeles: ${url}`, 'success');
+      this.log('✉️ Envíaselo a tu rival en Brave/Chrome. Al abrirlo, conectará su Lace Wallet para retarte on-chain.', 'system');
+      
+      // Animación de botón copiado
+      const btn = document.getElementById('btnCopyP2PLink');
+      if (btn) {
+        const oldText = btn.textContent;
+        btn.textContent = '✅ ¡COPIADO CON ÉXITO! ✅';
+        btn.style.borderColor = 'var(--neon-green)';
+        btn.style.color = 'var(--neon-green)';
+        btn.style.boxShadow = '0 0 15px rgba(16, 185, 129, 0.4)';
+        setTimeout(() => {
+          btn.textContent = oldText;
+          btn.style.borderColor = '#00f2fe';
+          btn.style.color = '#00f2fe';
+          btn.style.boxShadow = '0 0 10px rgba(0, 242, 254, 0.15)';
+        }, 1500);
+      }
+    }).catch(err => {
+      console.error('Failed to copy P2P link:', err);
+      this.log('❌ Error al copiar al portapapeles. Copia esta URL manualmente:', 'error');
+      this.log(url, 'warn');
+    });
   }
 
   private updateWalletUI(): void {
