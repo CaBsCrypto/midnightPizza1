@@ -1359,7 +1359,7 @@ export class PizzeriaUI {
       const addr = this.wallet.getAddress();
       const shortAddr = `${addr.slice(0, 8)}...${addr.slice(-5)}`;
       
-      if (addr.startsWith('preview_mr0xs')) {
+      if (addr.startsWith('preview_mr0xs') || addr.startsWith('mn_shield-addr_preview')) {
         btnConnect.textContent = `🌐 PREVIEW: ${shortAddr}`;
         btnConnect.style.background = 'rgba(0, 242, 254, 0.15)';
         btnConnect.style.borderColor = '#00f2fe';
