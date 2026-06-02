@@ -1372,6 +1372,19 @@ export class PizzeriaUI {
         btnConnect.style.color = 'var(--neon-green)';
         btnConnect.style.boxShadow = '0 0 15px rgba(16, 185, 129, 0.5)';
       }
+
+      // Fetch the balance asynchronously and append it to the button text
+      this.wallet.getBalance().then((balance) => {
+        if (balance) {
+          const balanceStr = ` | 🪙 ${balance.night} tNIGHT`;
+          if (addr.startsWith('preview_mr0xs') || addr.startsWith('mn_shield-addr_preview')) {
+            btnConnect.textContent = `🌐 PREVIEW: ${shortAddr}${balanceStr}`;
+          } else {
+            btnConnect.textContent = `🟢 SHIELDED: ${shortAddr}${balanceStr}`;
+          }
+        }
+      }).catch((e) => console.warn('Async balance load failed:', e));
+
     } else {
       btnConnect.textContent = '🔑 CONECTAR WALLET';
       btnConnect.style.background = 'rgba(99, 102, 241, 0.1)';

@@ -150,6 +150,45 @@ export class PizzeriaWallet {
     }
   }
 
+  // Retrieve tNIGHT and tDUST balances from the connected Lace wallet API
+  public async getBalance(): Promise<{ night: string; dust: string } | null> {
+    if (!this.isConnected || !this.walletAPI) return null;
+    try {
+      // 1. Try walletAPI.state()
+      if (typeof this.walletAPI.state === 'function') {
+        const state = await this.walletAPI.state();
+        if (state && typeof state === 'object') {
+          const nightVal = state.balances?.night ?? state.balances?.tNIGHT ?? state.balance?.night ?? state.balance?.tNIGHT;
+          const dustVal = state.balances?.dust ?? state.balances?.tDUST ?? state.balance?.dust ?? state.balance?.tDUST;
+          if (nightVal !== undefined || dustVal !== undefined) {
+            return {
+              night: nightVal !== undefined ? (Number(nightVal) / 1_000_000).toLocaleString() : '0',
+              dust: dustVal !== undefined ? (Number(dustVal) / 1_000_000).toLocaleString() : '0'
+            };
+          }
+        }
+      }
+      
+      // 2. Try walletAPI.getBalance()
+      if (typeof this.walletAPI.getBalance === 'function') {
+        const rawBalance = await this.walletAPI.getBalance();
+        if (rawBalance && typeof rawBalance === 'object') {
+          const nightVal = rawBalance.night ?? rawBalance.tNIGHT ?? rawBalance.tNight;
+          const dustVal = rawBalance.dust ?? rawBalance.tDUST ?? rawBalance.tDust;
+          if (nightVal !== undefined || dustVal !== undefined) {
+            return {
+              night: (Number(nightVal) / 1_000_000).toLocaleString(),
+              dust: (Number(dustVal) / 1_000_000).toLocaleString()
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to fetch balance from Lace API:', e);
+    }
+    return null;
+  }
+
   // Disconnect wallet
   public disconnect(): void {
     this.walletAPI = null;
