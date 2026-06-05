@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { MidnightZKSDK } from '../contract';
 
 export interface APIResponse<T> {
   success: boolean;
@@ -19,14 +20,6 @@ export function useGameAPI(baseURL: string = 'http://localhost:8080/api') {
       // Simular delay de red
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      // En producción:
-      // const res = await fetch(`${baseURL}/chefs`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ name, walletAddress })
-      // });
-      // return await res.json();
-
       return {
         success: true,
         data: {
@@ -45,10 +38,22 @@ export function useGameAPI(baseURL: string = 'http://localhost:8080/api') {
   }, [baseURL]);
 
   // Enviar el compromiso de tablero inicial (Merkle Root) al servidor
-  const submitBoardCommitment = useCallback(async (matchId: string, chefId: string, merkleRoot: string): Promise<APIResponse<any>> => {
+  const submitBoardCommitment = useCallback(async (
+    matchId: string, 
+    chefId: string, 
+    boardOrMerkleRoot: number[][] | string
+  ): Promise<APIResponse<any>> => {
     setLoading(true);
     setError(null);
     try {
+      let merkleRoot = '';
+      if (typeof boardOrMerkleRoot === 'string') {
+        merkleRoot = boardOrMerkleRoot;
+      } else {
+        const sdk = new MidnightZKSDK();
+        merkleRoot = sdk.calculateBoardCommitment(boardOrMerkleRoot);
+      }
+      
       console.log(`🌐 POST ${baseURL}/matches/${matchId}/commitment - Commit: ${merkleRoot}`);
       await new Promise(resolve => setTimeout(resolve, 600));
 
@@ -65,10 +70,29 @@ export function useGameAPI(baseURL: string = 'http://localhost:8080/api') {
   }, [baseURL]);
 
   // Enviar una mordida (bite move) auditada al servidor
-  const sendBiteMove = useCallback(async (matchId: string, chefId: string, row: number, col: number, proof: string): Promise<APIResponse<any>> => {
+  const sendBiteMove = useCallback(async (
+    matchId: string, 
+    chefId: string, 
+    row: number, 
+    col: number, 
+    boardOrProof: number[][] | string,
+    cellValue?: number
+  ): Promise<APIResponse<any>> => {
     setLoading(true);
     try {
-      console.log(`🌐 POST ${baseURL}/matches/${matchId}/bite - Celda: [${row}, ${col}] con prueba ZK`);
+      let proofString = '';
+      let isValid = true;
+      
+      if (typeof boardOrProof === 'string') {
+        proofString = boardOrProof;
+      } else if (boardOrProof && cellValue !== undefined) {
+        const sdk = new MidnightZKSDK();
+        const proofObj = await sdk.generateBiteProof(boardOrProof, row, col, cellValue);
+        proofString = proofObj.proofHash;
+        isValid = proofObj.isValid;
+      }
+      
+      console.log(`🌐 POST ${baseURL}/matches/${matchId}/bite - Celda: [${row}, ${col}] con prueba ZK: ${proofString}`);
       await new Promise(resolve => setTimeout(resolve, 500));
 
       return {
@@ -79,6 +103,8 @@ export function useGameAPI(baseURL: string = 'http://localhost:8080/api') {
           row,
           col,
           proven: true,
+          proof: proofString,
+          isValid,
           timestamp: Date.now()
         }
       };

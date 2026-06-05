@@ -66,6 +66,32 @@ export function useWallet() {
     }
   }, [updateWalletState]);
 
+  const revealBoard = useCallback(async (board: number[][], salt: Uint8Array, isP1: boolean) => {
+    setIsLoading(true);
+    try {
+      const success = await walletInstance.revealBoardTransaction(board, salt, isP1);
+      await updateWalletState();
+      return success;
+    } catch (err) {
+      console.error('Error al revelar el tablero en Midnight contract:', err);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [updateWalletState]);
+
+  const savePrivateBoardAndSalt = useCallback(async (board: number[][], salt: Uint8Array) => {
+    await walletInstance.savePrivateBoardAndSalt(board, salt);
+  }, []);
+
+  const getPrivateBoardAndSalt = useCallback(async () => {
+    return await walletInstance.getPrivateBoardAndSalt();
+  }, []);
+
+  const validateBoardAgainstCommitment = useCallback(async (commitmentStr: string) => {
+    return await walletInstance.validateBoardAgainstCommitment(commitmentStr);
+  }, []);
+
   return {
     isConnected,
     address,
@@ -76,6 +102,10 @@ export function useWallet() {
     connectWallet,
     disconnectWallet,
     signClaim,
+    revealBoard,
+    savePrivateBoardAndSalt,
+    getPrivateBoardAndSalt,
+    validateBoardAgainstCommitment,
     walletInstance, // Exponer la instancia por si se requiere interacción de bajo nivel
   };
 }

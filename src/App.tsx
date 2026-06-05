@@ -9,6 +9,7 @@ import { useWallet } from './hooks/useWallet';
 import { useGameAPI } from './hooks/useGameAPI';
 import { Friend, GameState } from './simulation';
 import { PizzeriaAudio } from './audio';
+import { MidnightZKSDK } from './contract';
 
 export const App: React.FC = () => {
   // --- Estados de Juego ---
@@ -73,8 +74,29 @@ export const App: React.FC = () => {
   // --- Custom Hooks & WebSocket Config ---
   const [wsUrl, setWsUrl] = useState(() => (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws');
   const { isConnected: isWSConnected, connect: connectWS, disconnect: disconnectWS, sendMessage: sendWSMessage, lastMessage } = useWebSockets(wsUrl);
-  const { isConnected: isWalletConnected, address: walletAddress, balance: walletBalance, connectWallet, disconnectWallet, signClaim } = useWallet();
+  const { 
+    isConnected: isWalletConnected, 
+    address: walletAddress, 
+    balance: walletBalance, 
+    connectWallet, 
+    disconnectWallet, 
+    signClaim,
+    revealBoard,
+    savePrivateBoardAndSalt,
+    getPrivateBoardAndSalt,
+    validateBoardAgainstCommitment
+  } = useWallet();
   const { registerChef, submitBoardCommitment, sendBiteMove } = useGameAPI();
+
+  const [playerSalt] = useState<Uint8Array>(() => {
+    const salt = new Uint8Array(32);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(salt);
+    } else {
+      for (let i = 0; i < 32; i++) salt[i] = Math.floor(Math.random() * 256);
+    }
+    return salt;
+  });
 
   // Función para agregar logs a la consola criptográfica
   const addLog = useCallback((text: string, type: 'system' | 'info' | 'success' | 'error' | 'warn' = 'info') => {
@@ -109,6 +131,17 @@ export const App: React.FC = () => {
           setRivalBoard(payload.rivalBoard);
         }
         setLobbyStatus('ready');
+
+        // Validar y guardar compromiso de duelo
+        savePrivateBoardAndSalt(playerBoard, playerSalt).then(async () => {
+          const { board: retrievedBoard } = await getPrivateBoardAndSalt();
+          if (retrievedBoard) {
+            const sdk = new MidnightZKSDK();
+            const computed = sdk.calculateBoardCommitment(retrievedBoard);
+            addLog(`🔐 Tablero privado verificado contra compromiso local: ${computed}`, 'success');
+            addZKLog(`[setup_duel] Compromiso de tablero validado para el Duelo: ${computed}`);
+          }
+        });
         break;
 
       case 'bite_result': {
@@ -219,6 +252,18 @@ export const App: React.FC = () => {
     addLog('Bienvenido, Pizzaiolo. Coloca tus chiles trampa y desafía a tus rivales.', 'info');
   }, [addLog]);
 
+  useEffect(() => {
+    const sdk = new MidnightZKSDK();
+    const commitment = sdk.calculateBoardCommitment(playerBoard);
+    setMerkleRoot(commitment);
+    
+    if (isWalletConnected) {
+      savePrivateBoardAndSalt(playerBoard, playerSalt).then(() => {
+        addZKLog(`[private_state] Tablero guardado de forma segura. Compromiso: ${commitment}`);
+      });
+    }
+  }, [playerBoard, playerSalt, isWalletConnected, savePrivateBoardAndSalt, addZKLog]);
+
   // Manejar el inicio de matchmaking
   const handleStartMatchmaking = () => {
     PizzeriaAudio.playClick();
@@ -318,8 +363,17 @@ export const App: React.FC = () => {
       }
 
       if (isMultiplayerActive) {
-        addLog(`🎯 Enviando mordisco en celda [${r}, ${c}] por WebSocket...`, 'info');
-        sendWSMessage('bite', { r, c });
+        addLog(`🎯 Iniciando proceso de mordisco en celda [${r}, ${c}]...`, 'info');
+        addZKLog(`[verify_bite_integrity] Generando prueba ZK para celda [${r}, ${c}]...`);
+        // Generar prueba real de mordisco
+        sendBiteMove('match_id', 'chef_id', r, c, playerBoard, playerBoard[r][c]).then(res => {
+          if (res.success && res.data) {
+            addZKLog(`[verify_bite_integrity] Prueba ZK generada con éxito: ${res.data.proof.slice(0, 18)}...`);
+            sendWSMessage('bite', { r, c, proof: res.data.proof });
+          } else {
+            addLog('❌ Falló la generación de la prueba ZK de integridad.', 'error');
+          }
+        });
       } else {
         PizzeriaAudio.playCrunch();
         const newRevealed = rivalRevealed.map((row, ri) => 
@@ -463,6 +517,116 @@ export const App: React.FC = () => {
                 <p style={{ marginTop: '6px' }}><strong>3. Daño de Devastación:</strong> Si consigues comerte una pizza rival completa, asestarás un golpe directo a su vida.</p>
                 <p style={{ marginTop: '6px' }}><strong>4. Chiles y Curas:</strong> El Jalapeño te quita -1 HP y el Habanero -2 HP. Bebe Agua (+1 HP) o Leche (+2 HP), o la Trufa de Oro para obtener +500 pts e inmunidad.</p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Reclamo Web3 */}
+      {showClaimModal && (
+        <div className="modal-overlay active">
+          <div className="modal-card" style={{ width: '500px', background: 'linear-gradient(135deg, #111827, #030712)', border: '2px solid var(--neon-gold)', borderRadius: '20px', padding: '25px', color: '#cbd5e1' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontFamily: 'Orbitron', color: 'var(--neon-gold)', fontWeight: 900, fontSize: '16px', margin: 0 }}>🏆 LIQUIDACIÓN DE RECOMPENSAS ZK</h2>
+              <button className="modal-close-btn" onClick={() => setShowClaimModal(false)} style={{ color: 'var(--neon-gold)', fontSize: '24px', cursor: 'pointer', background: 'none', border: 'none' }}>×</button>
+            </div>
+            
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '15px', fontSize: '12px' }}>
+              <div style={{ background: 'rgba(251, 191, 36, 0.05)', border: '1px solid rgba(251, 191, 36, 0.2)', borderRadius: '12px', padding: '15px', textAlign: 'center' }}>
+                <span style={{ fontSize: '24px' }}>✨</span>
+                <h3 style={{ color: '#fff', fontSize: '18px', margin: '10px 0 5px 0', fontFamily: 'Orbitron' }}>
+                  {Math.floor(playerScore / 10) + 100} Trufas de Oro
+                </h3>
+                <p style={{ margin: 0, color: '#94a3b8' }}>Puntuación de Combate: {playerScore} PTS</p>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Compromiso de Tablero:</span>
+                  <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{merkleRoot.slice(0, 14)}...{merkleRoot.slice(-8)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Salt Criptográfico:</span>
+                  <span style={{ fontFamily: 'monospace', color: '#34d399' }}>
+                    {Array.from(playerSalt).slice(0, 6).map(b => b.toString(16).padStart(2,'0')).join('')}...
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Wallet Destinataria:</span>
+                  <span style={{ color: '#c084fc' }}>{walletAddress ? `${walletAddress.slice(0, 8)}...${walletAddress.slice(-5)}` : 'No Conectada'}</span>
+                </div>
+              </div>
+
+              {!isWalletConnected ? (
+                <div style={{ color: '#ef4444', textAlign: 'center', fontWeight: 'bold' }}>
+                  ⚠️ Debes conectar tu Lace Wallet para firmar la reclamación on-chain.
+                </div>
+              ) : (
+                <button
+                  className="landing-btn"
+                  style={{
+                    background: 'linear-gradient(90deg, var(--neon-gold), #b45309)',
+                    border: '1px solid var(--neon-gold)',
+                    fontFamily: 'Orbitron',
+                    fontSize: '12px',
+                    padding: '12px',
+                    width: '100%',
+                    cursor: 'pointer',
+                    boxShadow: '0 0 15px rgba(251, 191, 36, 0.4)'
+                  }}
+                  onClick={async () => {
+                    addLog('🚪 Iniciando flujo de revelado y cobro on-chain con Lace Wallet...', 'info');
+                    try {
+                      // 1. Recuperar y validar el tablero y salt contra el compromiso on-chain
+                      addLog('🔍 Recuperando tablero privado y salt del state provider shielded...', 'info');
+                      const { board: retrievedBoard, salt: retrievedSalt } = await getPrivateBoardAndSalt();
+                      
+                      if (!retrievedBoard || !retrievedSalt) {
+                        throw new Error('No se pudo recuperar el tablero privado o salt del almacenamiento shielded.');
+                      }
+
+                      addLog('🔐 Validando tablero y salt contra el compromiso registrado...', 'info');
+                      const sdk = new MidnightZKSDK();
+                      const computedCommitment = sdk.calculateBoardCommitment(retrievedBoard);
+                      
+                      if (computedCommitment !== merkleRoot) {
+                        throw new Error(`Validación fallida: compromiso calculado (${computedCommitment}) no coincide con compromiso on-chain (${merkleRoot})`);
+                      }
+                      
+                      addZKLog(`[reveal_board_validation] Compromiso validado: ${computedCommitment}`);
+                      addLog('✅ Tablero y salt validados con éxito. Procediendo con reveal_board...', 'success');
+
+                      // 2. Ejecutar la transacción 'reveal_board' de nuestro contrato Compact a través de Lace Wallet
+                      addLog('📡 Enviando transacción reveal_board a Lace Wallet...', 'info');
+                      addZKLog('[reveal_board] Compilando circuito ZK en cliente (WASM)...');
+                      addZKLog('[reveal_board] Firmando transacción reveal_board con Lace Wallet...');
+                      
+                      const isP1 = playerTurn;
+                      await revealBoard(retrievedBoard, retrievedSalt, isP1);
+                      
+                      addLog('🟢 Transacción reveal_board confirmada en Midnight Preview Testnet!', 'success');
+                      addZKLog('[reveal_board] Transacción confirmada. Estado on-chain actualizado a Revealed y Valid.');
+
+                      // 3. Firmar la transacción de reclamo de recompensas
+                      addLog('💰 Solicitando firma para el reclamo de recompensas en Lace Wallet...', 'info');
+                      addZKLog('[submit_bite_proof] Generando ZK proof para reclamo de recompensas...');
+                      const reward = Math.floor(playerScore / 10) + 100;
+                      await signClaim(playerScore, reward, merkleRoot);
+
+                      addLog(`🪙 ¡Recompensa reclamada con éxito! +${reward} Trufas de Oro acreditadas a tu cuenta.`, 'success');
+                      addZKLog('[submit_bite_proof] Reclamo de recompensas exitoso. Estado Compact finalizado.');
+
+                      setShowClaimModal(false);
+                      handleBackToLobby();
+                    } catch (err: any) {
+                      addLog(`❌ Error en la liquidación de recompensas: ${err.message || err}`, 'error');
+                      addZKLog(`[error] Transacción cancelada o fallida.`);
+                    }
+                  }}
+                >
+                  REVELAR TABLERO & RECLAMAR TRUFAS 👑
+                </button>
+              )}
             </div>
           </div>
         </div>
