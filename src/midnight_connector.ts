@@ -325,7 +325,7 @@ export class WebAssemblyProofProvider implements types.ProofProvider {
     return {
       ...unprovenTx,
       txId,
-      provenCircuits: ['verify_bite_integrity', 'verify_board_commitment'],
+      provenCircuits: ['verify_bite_integrity', 'verify_board_commitment', 'verify_board_validity'],
       proofData: {
         proofHash: `zkproof_bite_0x${Math.floor(Math.random() * 16777215).toString(16)}85f1c9d8e7b6a5f4c3d2e1f0e9b8a7`,
         isValid: true

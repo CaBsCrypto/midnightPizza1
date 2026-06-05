@@ -1308,6 +1308,7 @@ export class PizzeriaUI {
         const addr = this.wallet.getAddress();
         const shortAddr = `${addr.slice(0, 10)}...${addr.slice(-6)}`;
         this.log(`🔑 ¡Lace Wallet conectada con éxito! Dirección: ${shortAddr}`, 'success');
+        this.log(`🔍 Métodos de la API: [${this.wallet.getWalletKeys().join(', ')}]`, 'info');
         this.log('📝 Red activa: MIDNIGHT TESTNET (PREVIEW)', 'system');
         this.updateWalletUI();
       } else {

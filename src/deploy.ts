@@ -22,6 +22,9 @@ export async function deployPizzaContract(connector: MidnightConnector): Promise
       // Retornar un tablero de 256 bytes vacío para inicialización
       return new Uint8Array(256);
     },
+    get_private_salt: async () => {
+      return new Uint8Array(32);
+    },
     get_private_bite_val: async () => {
       return 0n;
     }

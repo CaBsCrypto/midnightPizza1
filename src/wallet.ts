@@ -204,6 +204,19 @@ export class PizzeriaWallet {
     return this.connectedAddress;
   }
 
+  public getWalletKeys(): string[] {
+    if (!this.walletAPI) return [];
+    const keys: string[] = [];
+    for (const key in this.walletAPI) {
+      keys.push(key);
+    }
+    // Also include Object.getOwnPropertyNames to catch non-enumerable methods
+    Object.getOwnPropertyNames(Object.getPrototypeOf(this.walletAPI) || {}).forEach(k => {
+      if (k !== 'constructor' && !keys.includes(k)) keys.push(k);
+    });
+    return keys;
+  }
+
   // Request the real Lace extension to sign the ZK reward claim transaction
   public async signClaimTransaction(
     score: number,

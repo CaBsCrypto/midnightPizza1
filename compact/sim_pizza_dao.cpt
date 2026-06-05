@@ -17,18 +17,26 @@ export interface SimPizzaDAOLedger {
   
   public_game_active: Cell<boolean>;
   public_turn_p1: Cell<boolean>;
+
+  // Commit-Reveal Ledger States
+  public_p1_revealed: Cell<boolean>;
+  public_p2_revealed: Cell<boolean>;
+  public_p1_valid: Cell<boolean>;
+  public_p2_valid: Cell<boolean>;
 }
 
 // 2. Definition of local computations (Witness) on the client machine
 export interface SimPizzaDAOWitness {
   get_private_board(): bytes256; 
+  get_private_salt(): bytes32;
   get_private_bite_val(): uint8;
 }
 
 // 3. Definition of ZK verification circuits
 export interface SimPizzaDAOCircuits {
   verify_board_commitment(board: bytes256, commitment: bytes32): boolean;
-  verify_bite_integrity(board: bytes256, expected_commitment: bytes32): boolean;
+  verify_bite_integrity(board: bytes256, salt: bytes32, index: uint8, cell_value: uint8, expected_commitment: bytes32): boolean;
+  verify_board_validity(board: bytes256): boolean;
 }
 
 // 4. Main Contract Implementation
@@ -47,6 +55,12 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
   public public_game_active: Cell<boolean>;
   public public_turn_p1: Cell<boolean>;
 
+  // Commit-Reveal Ledger Cells
+  public public_p1_revealed: Cell<boolean>;
+  public public_p2_revealed: Cell<boolean>;
+  public public_p1_valid: Cell<boolean>;
+  public public_p2_valid: Cell<boolean>;
+
   constructor(initial_root: bytes32) {
     this.public_p1_commitment.set(initial_root);
     this.public_p2_commitment.set(hash256("empty"));
@@ -56,6 +70,10 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
     this.public_p2_score.set(0);
     this.public_game_active.set(false);
     this.public_turn_p1.set(true);
+    this.public_p1_revealed.set(false);
+    this.public_p2_revealed.set(false);
+    this.public_p1_valid.set(false);
+    this.public_p2_valid.set(false);
   }
 
   // ZK Circuit: Proves that the private board matches the declared commitment
@@ -63,9 +81,26 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
     return hash256(board) === commitment;
   }
 
-  // ZK Circuit: Proves that a bite coordinate results in a valid change matching commitment
-  public circuit verify_bite_integrity(board: bytes256, expected_commitment: bytes32): boolean {
-    return hash256(board) === expected_commitment;
+  // ZK Circuit: Proves that a bite coordinate matches the commitment and has the declared cell value
+  public circuit verify_bite_integrity(
+    board: bytes256,
+    salt: bytes32,
+    index: uint8,
+    cell_value: uint8,
+    expected_commitment: bytes32
+  ): boolean {
+    return (hash256(board) === expected_commitment) && (board[index] === cell_value);
+  }
+
+  // ZK Circuit: Proves that the board has a valid layout (between 5 and 20 non-empty cells)
+  public circuit verify_board_validity(board: bytes256): boolean {
+    let count: uint8 = 0;
+    for (let i: uint8 = 0; i < 36; i++) {
+      if (board[i] > 0) {
+        count = count + 1;
+      }
+    }
+    return count >= 5 && count <= 20;
   }
 
   // Exported transaction to initialize a duel
@@ -81,6 +116,10 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
     this.public_p2_score.set(0);
     this.public_game_active.set(true);
     this.public_turn_p1.set(true);
+    this.public_p1_revealed.set(false);
+    this.public_p2_revealed.set(false);
+    this.public_p1_valid.set(false);
+    this.public_p2_valid.set(false);
   }
 
   // Exported transaction to submit a ZK verified bite result
@@ -90,10 +129,11 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
     is_p1_attacking: boolean
   ): void {
     const board = this.witness.get_private_board();
+    const salt = this.witness.get_private_salt();
     const active_commitment = is_p1_attacking ? this.public_p2_commitment.get() : this.public_p1_commitment.get();
 
-    // Assert that the private board matches the commitment
-    assert(this.verify_bite_integrity(board, active_commitment));
+    // Assert that the private board matches the commitment and the cell value is correct
+    assert(this.verify_bite_integrity(board, salt, index, cell_value, active_commitment));
 
     // Update HP and Score depending on who is attacking and the cell type
     if (is_p1_attacking) {
@@ -152,6 +192,29 @@ export contract SimPizzaDAO implements SimPizzaDAOLedger, SimPizzaDAOWitness, Si
         this.public_p2_score.set(s2 + 500);
       }
       this.public_turn_p1.set(true);
+    }
+  }
+
+  // Exported transaction to reveal the board and verify its validity on-chain
+  export function reveal_board(
+    board: bytes256,
+    salt: bytes32,
+    is_p1: boolean
+  ): void {
+    const commitment = is_p1 ? this.public_p1_commitment.get() : this.public_p2_commitment.get();
+    
+    // Assert that the board matches the commitment
+    assert(hash256(board) === commitment);
+
+    // Verify if board layout is valid
+    const isValid = this.verify_board_validity(board);
+
+    if (is_p1) {
+      this.public_p1_revealed.set(true);
+      this.public_p1_valid.set(isValid);
+    } else {
+      this.public_p2_revealed.set(true);
+      this.public_p2_valid.set(isValid);
     }
   }
 }

@@ -9,10 +9,15 @@ export interface Ledger {
   readonly public_p2_score: bigint;
   readonly public_game_active: boolean;
   readonly public_turn_p1: boolean;
+  readonly public_p1_revealed: boolean;
+  readonly public_p2_revealed: boolean;
+  readonly public_p1_valid: boolean;
+  readonly public_p2_valid: boolean;
 }
 
 export interface Witnesses<T = any> {
   get_private_board(context: __compactRuntime.WitnessContext<Ledger, T>): Promise<Uint8Array | [Uint8Array, T]> | Uint8Array | [Uint8Array, T];
+  get_private_salt(context: __compactRuntime.WitnessContext<Ledger, T>): Promise<Uint8Array | [Uint8Array, T]> | Uint8Array | [Uint8Array, T];
   get_private_bite_val(context: __compactRuntime.WitnessContext<Ledger, T>): Promise<bigint | [bigint, T]> | bigint | [bigint, T];
 }
 
@@ -26,7 +31,15 @@ export interface PureCircuits<T = any> {
   readonly verify_bite_integrity: (
     context: __compactRuntime.CircuitContext<T>,
     board: Uint8Array,
+    salt: Uint8Array,
+    index: bigint,
+    cell_value: bigint,
     expected_commitment: Uint8Array
+  ) => __compactRuntime.CircuitResults<T, boolean>;
+
+  readonly verify_board_validity: (
+    context: __compactRuntime.CircuitContext<T>,
+    board: Uint8Array
   ) => __compactRuntime.CircuitResults<T, boolean>;
 }
 
@@ -43,14 +56,21 @@ export interface ImpureCircuits<T = any> {
     cell_value: bigint,
     is_p1_attacking: boolean
   ) => __compactRuntime.CircuitResults<T, void>;
+
+  readonly reveal_board: (
+    context: __compactRuntime.CircuitContext<T>,
+    board: Uint8Array,
+    salt: Uint8Array,
+    is_p1: boolean
+  ) => __compactRuntime.CircuitResults<T, void>;
 }
 
 // Helper to extract Ledger from ContractState or CircuitContext query context
 export function ledger(state: any): Ledger {
-  if (state && state.public_p1_commitment !== undefined) {
+  if (state && state.public_p1_commitment !== undefined && state.public_p1_revealed !== undefined) {
     return state;
   }
-  if (state && state.data && state.data.public_p1_commitment !== undefined) {
+  if (state && state.data && state.data.public_p1_commitment !== undefined && state.data.public_p1_revealed !== undefined) {
     return state.data;
   }
   return {
@@ -62,6 +82,10 @@ export function ledger(state: any): Ledger {
     public_p2_score: 0n,
     public_game_active: false,
     public_turn_p1: true,
+    public_p1_revealed: false,
+    public_p2_revealed: false,
+    public_p1_valid: false,
+    public_p2_valid: false,
   };
 }
 
@@ -121,6 +145,10 @@ export class Contract<T, W extends Witnesses<T> = Witnesses<T>> {
           public_p2_score: 0n,
           public_game_active: true,
           public_turn_p1: true,
+          public_p1_revealed: false,
+          public_p2_revealed: false,
+          public_p1_valid: false,
+          public_p2_valid: false,
         });
 
         return {
@@ -184,6 +212,20 @@ export class Contract<T, W extends Witnesses<T> = Witnesses<T>> {
           context: nextContext,
           gasCost: mockRunningCost(),
         };
+      },
+      reveal_board: (context, board, salt, is_p1) => {
+        const nextLedger: Partial<Ledger> = is_p1
+          ? { public_p1_revealed: true, public_p1_valid: true }
+          : { public_p2_revealed: true, public_p2_valid: true };
+
+        const nextContext = updateLedgerState(context, nextLedger);
+
+        return {
+          result: undefined,
+          proofData: mockProofData({ board, salt, is_p1 }, undefined),
+          context: nextContext,
+          gasCost: mockRunningCost(),
+        };
       }
     };
 
@@ -198,9 +240,28 @@ export class Contract<T, W extends Witnesses<T> = Witnesses<T>> {
           gasCost: mockRunningCost(),
         };
       },
-      verify_bite_integrity: (context, board, expected_commitment) => {
+      verify_bite_integrity: (context, board, salt, index, cell_value, expected_commitment) => {
         const hash = mockHash256(board);
-        const isValid = hash.every((val, i) => val === expected_commitment[i]);
+        const indexNum = Number(index);
+        const valNum = Number(cell_value);
+        const matchesCommitment = hash.every((val, i) => val === expected_commitment[i]);
+        const matchesValue = board[indexNum] === valNum;
+        const isValid = matchesCommitment && matchesValue;
+        return {
+          result: isValid,
+          proofData: mockProofData({ board, salt, index, cell_value, expected_commitment }, isValid),
+          context,
+          gasCost: mockRunningCost(),
+        };
+      },
+      verify_board_validity: (context, board) => {
+        let count = 0;
+        for (let i = 0; i < board.length; i++) {
+          if (board[i] > 0) {
+            count++;
+          }
+        }
+        const isValid = count >= 5 && count <= 20;
         return {
           result: isValid,
           proofData: mockProofData(board, isValid),
@@ -224,6 +285,10 @@ export class Contract<T, W extends Witnesses<T> = Witnesses<T>> {
       public_p2_score: 0n,
       public_game_active: false,
       public_turn_p1: true,
+      public_p1_revealed: false,
+      public_p2_revealed: false,
+      public_p1_valid: false,
+      public_p2_valid: false,
     };
 
     return {

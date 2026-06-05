@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # 🍕 Go Backend: Servidor de WebSockets y Matchmaking
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - MIDNIGHT_NODE_URL=http://midnight-sandbox:9944
+    restart: always
+    networks:
+      - pizza-net
+
+  # 🛡️ Midnight Sandbox: Nodo local, indexadores y Proof Server para desarrollo ZK
+  midnight-sandbox:
+    image: ghcr.io/midnight-ntwrk/sandbox:latest
+    ports:
+      - "9944:9944"  # Puerto del nodo RPC
+      - "7000:7000"  # Puerto del indexador / Proof Server local
+    environment:
+      - NETWORK_NAME=sandbox
+    restart: unless-stopped
+    networks:
+      - pizza-net
+
+networks:
+  pizza-net:
+    driver: bridge
