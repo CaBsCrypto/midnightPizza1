@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,10 +25,12 @@ type Event struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// JoinLobbyPayload define los datos recibidos al unirse al lobby
+// JoinLobbyPayload define los datos recibidos al unirse al lobby, con soporte para salas ZK preimage
 type JoinLobbyPayload struct {
-	PlayerID string `json:"playerId"`
-	Username string `json:"username"`
+	PlayerID       string `json:"playerId"`
+	Username       string `json:"username"`
+	InviteHash     string `json:"inviteHash,omitempty"`     // En caso de hospedar
+	InvitePreimage string `json:"invitePreimage,omitempty"` // En caso de unirse
 }
 
 // MatchFoundPayload define los datos enviados cuando se encuentra una partida
@@ -42,7 +45,7 @@ type MatchFoundPayload struct {
 type PlaceCommitmentPayload struct {
 	RoomID     string          `json:"roomId"`
 	PlayerID   string          `json:"playerId"`
-	Commitment json.RawMessage `json:"commitment"` // Permite guardar la disposición de barcos
+	Commitment json.RawMessage `json:"commitment"`
 }
 
 // FireBitePayload contiene las coordenadas de un ataque
@@ -56,10 +59,10 @@ type FireBitePayload struct {
 // BiteResultPayload contiene el resultado de un ataque
 type BiteResultPayload struct {
 	RoomID   string `json:"roomId"`
-	PlayerID string `json:"playerId"` // Quién atacó
+	PlayerID string `json:"playerId"`
 	X        int    `json:"x"`
 	Y        int    `json:"y"`
-	Result   string `json:"result"` // "hit", "miss", "sunk"
+	Result   string `json:"result"`
 }
 
 // RevealBoardPayload contiene la revelación final del tablero para verificación
@@ -72,18 +75,25 @@ type RevealBoardPayload struct {
 // OpponentDisconnectedPayload notifica si el rival abandona la sala
 type OpponentDisconnectedPayload struct {
 	RoomID   string `json:"roomId"`
-	PlayerID string `json:"playerId"` // Jugador que se desconectó
+	PlayerID string `json:"playerId"`
+}
+
+// LobbyErrorPayload define el payload enviado en caso de error de lobby
+type LobbyErrorPayload struct {
+	Message string `json:"message"`
 }
 
 // Client representa un jugador conectado mediante WebSocket
 type Client struct {
-	conn     net.Conn
-	send     chan []byte
-	playerID string
-	username string
-	room     *Room
-	isClosed bool
-	mu       sync.Mutex
+	conn           net.Conn
+	send           chan []byte
+	playerID       string
+	username       string
+	inviteHash     string
+	invitePreimage string
+	room           *Room
+	isClosed       bool
+	mu             sync.Mutex
 }
 
 // Room representa una sala de juego activa con dos jugadores
@@ -96,19 +106,22 @@ type Room struct {
 
 // Server administra el ciclo de vida del juego, los clientes y las salas
 type Server struct {
-	rooms      map[string]*Room
-	roomsMu    sync.RWMutex
-	pending    []*Client
-	pendingMu  sync.Mutex
-	register   chan *Client
-	unregister chan *Client
+	rooms         map[string]*Room
+	roomsMu       sync.RWMutex
+	pending       []*Client
+	pendingMu     sync.Mutex
+	inviteLobbies map[string]*Client // Mapa hash -> Host Client
+	inviteMu      sync.Mutex
+	register      chan *Client
+	unregister    chan *Client
 }
 
 func NewServer() *Server {
 	s := &Server{
-		rooms:      make(map[string]*Room),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		rooms:         make(map[string]*Room),
+		inviteLobbies: make(map[string]*Client),
+		register:      make(chan *Client),
+		unregister:    make(chan *Client),
 	}
 	go s.run()
 	return s
@@ -129,8 +142,39 @@ func (s *Server) run() {
 	}
 }
 
-// addToLobby agrega un jugador a la cola del Matchmaker y busca pareja
+// addToLobby agrega un jugador a la cola del Matchmaker o lo asocia vía ZK Preimage
 func (s *Server) addToLobby(client *Client) {
+	// 1. Caso Lobby Privado ZK Preimage (Unirse como Invitado)
+	if client.invitePreimage != "" {
+		s.inviteMu.Lock()
+		h := sha256.Sum256([]byte(client.invitePreimage))
+		hashStr := fmt.Sprintf("%x", h)
+		host, ok := s.inviteLobbies[hashStr]
+		if ok {
+			delete(s.inviteLobbies, hashStr)
+			s.inviteMu.Unlock()
+			log.Printf("Matchmaking ZK Preimage exitoso: Host %s y Guest %s se unen por secreto '%s'", host.username, client.username, client.invitePreimage)
+			s.createRoom(host, client)
+			return
+		}
+		s.inviteMu.Unlock()
+		// Retornar error si la preimagen no coincide con ninguna sala activa
+		errPayload := LobbyErrorPayload{Message: "Código de invitación inválido o sala no encontrada"}
+		errEvent, _ := json.Marshal(Event{Type: "lobby_error", Payload: mustMarshal(errPayload)})
+		client.sendBytes(errEvent)
+		return
+	}
+
+	// 2. Caso Lobby Privado ZK Preimage (Hospedar como Host)
+	if client.inviteHash != "" {
+		s.inviteMu.Lock()
+		s.inviteLobbies[client.inviteHash] = client
+		s.inviteMu.Unlock()
+		log.Printf("Sala privada creada. Esperando invitado con preimage para hash: %s", client.inviteHash)
+		return
+	}
+
+	// 3. Matchmaker público tradicional
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 
@@ -157,15 +201,27 @@ func (s *Server) addToLobby(client *Client) {
 // removeFromLobby quita al jugador de la cola del Matchmaker si se desconecta
 func (s *Server) removeFromLobby(client *Client) {
 	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-
 	for i, p := range s.pending {
 		if p == client {
 			s.pending = append(s.pending[:i], s.pending[i+1:]...)
-			log.Printf("Jugador %s eliminado del lobby.", client.playerID)
+			log.Printf("Jugador %s eliminado del lobby público.", client.playerID)
 			break
 		}
 	}
+	s.pendingMu.Unlock()
+
+	// Limpiar lobbies de invitación si aplica
+	s.inviteMu.Lock()
+	if client.inviteHash != "" {
+		delete(s.inviteLobbies, client.inviteHash)
+	}
+	// Buscar por valor por si acaso
+	for hash, host := range s.inviteLobbies {
+		if host == client {
+			delete(s.inviteLobbies, hash)
+		}
+	}
+	s.inviteMu.Unlock()
 }
 
 // createRoom genera una nueva sala y notifica a los jugadores
@@ -254,7 +310,6 @@ func (c *Client) sendBytes(msg []byte) {
 	select {
 	case c.send <- msg:
 	default:
-		// Buffer lleno, cerramos conexión
 		log.Printf("Buffer de escritura lleno para cliente: %s", c.conn.RemoteAddr().String())
 		c.conn.Close()
 	}
@@ -268,7 +323,6 @@ func (c *Client) writePump() {
 	for {
 		msg, ok := <-c.send
 		if !ok {
-			// El canal fue cerrado
 			writeTextMessage(c.conn, []byte{})
 			return
 		}
@@ -320,13 +374,14 @@ func (c *Client) handleEvent(server *Server, ev Event) {
 		}
 		c.playerID = p.PlayerID
 		c.username = p.Username
+		c.inviteHash = p.InviteHash
+		c.invitePreimage = p.InvitePreimage
 		server.addToLobby(c)
 
 	case "place_commitment":
 		if c.room == nil {
 			return
 		}
-		// Reenviar el compromiso al oponente
 		c.room.mu.Lock()
 		opponent := c.getOpponent()
 		c.room.mu.Unlock()
@@ -339,7 +394,6 @@ func (c *Client) handleEvent(server *Server, ev Event) {
 		if c.room == nil {
 			return
 		}
-		// Reenviar el ataque al oponente
 		c.room.mu.Lock()
 		opponent := c.getOpponent()
 		c.room.mu.Unlock()
@@ -352,7 +406,6 @@ func (c *Client) handleEvent(server *Server, ev Event) {
 		if c.room == nil {
 			return
 		}
-		// Reenviar el resultado al oponente
 		c.room.mu.Lock()
 		opponent := c.getOpponent()
 		c.room.mu.Unlock()
@@ -365,7 +418,6 @@ func (c *Client) handleEvent(server *Server, ev Event) {
 		if c.room == nil {
 			return
 		}
-		// Reenviar la revelación al oponente
 		c.room.mu.Lock()
 		opponent := c.getOpponent()
 		c.room.mu.Unlock()
@@ -435,7 +487,7 @@ func readMessage(conn net.Conn) ([]byte, error) {
 	}
 
 	opcode := header[0] & 0x0f
-	if opcode == 8 { // Cierre de conexión
+	if opcode == 8 {
 		return nil, io.EOF
 	}
 
@@ -488,7 +540,7 @@ func readMessage(conn net.Conn) ([]byte, error) {
 // writeTextMessage empaqueta y envía un frame de texto WebSocket
 func writeTextMessage(conn net.Conn, msg []byte) error {
 	var header []byte
-	header = append(header, 0x81) // FIN = 1, Opcode = 1 (Texto)
+	header = append(header, 0x81)
 
 	length := len(msg)
 	if length <= 125 {
@@ -513,7 +565,6 @@ func writeTextMessage(conn net.Conn, msg []byte) error {
 func main() {
 	server := NewServer()
 
-	// Endpoint para el healthcheck de la app
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
@@ -521,9 +572,7 @@ func main() {
 		json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
 	})
 
-	// Endpoint WebSocket
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		// Habilitar CORS básico para conexiones de WebSocket si aplica
 		conn, err := upgradeToWebSocket(w, r)
 		if err != nil {
 			log.Printf("Error upgrading connection: %v", err)

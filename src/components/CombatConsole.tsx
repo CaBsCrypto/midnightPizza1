@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 export interface RivalChef {
   name: string;
@@ -15,7 +15,7 @@ interface CombatConsoleProps {
   isMultiplayerActive: boolean;
   matchmakingTime: number;
   turnTimer: number;
-  onStartMatchmaking: () => void;
+  onStartMatchmaking: (inviteHash?: string, invitePreimage?: string) => void;
   onCancelMatchmaking: () => void;
   onForfeit: () => void;
   onBackToLobby: () => void;
@@ -48,6 +48,34 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
   onConnectWS,
   onDisconnectWS
 }) => {
+  const [lobbyMode, setLobbyMode] = useState<'public' | 'private'>('public');
+  const [inviteCode, setInviteCode] = useState('');
+  const [generatedPassphrase, setGeneratedPassphrase] = useState('');
+
+  // Auxiliar para calcular SHA-256 en cliente de forma instantánea
+  const calculateSHA256 = async (text: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hash))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  const handleCreatePrivateLobby = async () => {
+    const words = ['spicy', 'truffle', 'habanero', 'cheese', 'margherita', 'pepperoni', 'jalapeno', 'crust'];
+    const pass = Array(3).fill(null).map(() => words[Math.floor(Math.random() * words.length)]).join('-');
+    setGeneratedPassphrase(pass);
+    const hash = await calculateSHA256(pass);
+    onStartMatchmaking(hash, undefined);
+  };
+
+  const handleJoinPrivateLobby = () => {
+    if (inviteCode.trim()) {
+      onStartMatchmaking(undefined, inviteCode.trim());
+    }
+  };
+
   if (gameState === 'playing' && rivalChef) {
     const turnColor = playerTurn ? '#10b981' : '#ea580c';
     let turnText = playerTurn ? `👉 ¡TU TURNO DE MORDER!` : `⏳ TURNO RIVAL PENSANDO...`;
@@ -184,11 +212,19 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
             <div className="audit-spinner-small"></div>
             <span className="searching-text" style={{ fontSize: '11px', fontFamily: 'Orbitron' }}>
               RASTREANDO RED DESCENTRALIZADA... Tiempo: <strong>{matchmakingTime}s</strong>
+              {generatedPassphrase && (
+                <div style={{ fontSize: '9px', color: 'var(--neon-gold)', marginTop: '4px' }}>
+                  Código de tu sala ZK: <strong>{generatedPassphrase}</strong> (Pásalo a tu rival)
+                </div>
+              )}
             </span>
           </div>
           <button 
             className="console-btn btn-secondary" 
-            onClick={onCancelMatchmaking}
+            onClick={() => {
+              setGeneratedPassphrase('');
+              onCancelMatchmaking();
+            }}
             style={{ margin: 0, padding: '8px 16px', width: 'auto', fontSize: '11px' }}
           >
             CANCELAR BÚSQUEDA
@@ -196,23 +232,79 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
         </div>
       ) : (
         <div className="horizontal-console-row" style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
-            <div style={{ textAlign: 'left', flex: 1, minWidth: '240px' }}>
-              <span style={{ fontFamily: 'Orbitron', fontWeight: 700, fontSize: '12px', color: 'var(--neon-gold)' }}>
-                ⚔️ ARENA DE ENFRENTAMIENTOS CRIPTOGRÁFICOS
-              </span>
-              <p style={{ fontSize: '10px', color: '#94a3b8', margin: '2px 0 0 0' }}>
-                Prepara tu mesa secreta arriba y presiona Iniciar Matchmaking para buscar un rival en la red Midnight L2.
-              </p>
-            </div>
+          
+          {/* Alternar modo Lobby Público o ZK Privado */}
+          <div style={{ display: 'flex', gap: '10px', width: '100%', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '8px' }}>
             <button 
-              className="console-btn" 
-              onClick={onStartMatchmaking}
-              style={{ margin: 0, padding: '10px 24px', width: 'auto', fontFamily: 'Orbitron', fontWeight: 'bold' }}
+              onClick={() => setLobbyMode('public')} 
+              style={{ background: 'none', border: 'none', color: lobbyMode === 'public' ? 'var(--neon-gold)' : '#64748b', fontSize: '10px', fontFamily: 'Orbitron', fontWeight: 'bold', cursor: 'pointer' }}
             >
-              BUSCAR RIVAL EN LÍNEA ⚡
+              🌐 LOBBY PÚBLICO
+            </button>
+            <button 
+              onClick={() => setLobbyMode('private')} 
+              style={{ background: 'none', border: 'none', color: lobbyMode === 'private' ? 'var(--neon-gold)' : '#64748b', fontSize: '10px', fontFamily: 'Orbitron', fontWeight: 'bold', cursor: 'pointer' }}
+            >
+              🔑 SALA PRIVADA (ZK PREIMAGE)
             </button>
           </div>
+
+          {lobbyMode === 'public' ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ textAlign: 'left', flex: 1, minWidth: '240px' }}>
+                <span style={{ fontFamily: 'Orbitron', fontWeight: 700, fontSize: '11px', color: 'var(--neon-gold)' }}>
+                  ⚔️ ARENA DE ENFRENTAMIENTOS MULTIJUGADOR PÚBLICOS
+                </span>
+                <p style={{ fontSize: '9px', color: '#94a3b8', margin: '2px 0 0 0' }}>
+                  Prepara tu mesa secreta arriba y presiona Iniciar para emparejarte con cualquier chef disponible en la red.
+                </p>
+              </div>
+              <button 
+                className="console-btn" 
+                onClick={() => onStartMatchmaking()}
+                style={{ margin: 0, padding: '10px 24px', width: 'auto', fontFamily: 'Orbitron', fontWeight: 'bold' }}
+              >
+                BUSCAR RIVAL EN LÍNEA ⚡
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '15px', background: 'rgba(251, 191, 36, 0.02)', padding: '10px', borderRadius: '10px', border: '1px solid rgba(251, 191, 36, 0.1)' }}>
+              
+              {/* Host Section */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px', minWidth: '200px' }}>
+                <span style={{ fontSize: '9px', color: '#fff', fontWeight: 'bold' }}>HOSPEDAR DUELO PRIVADO:</span>
+                <button 
+                  className="console-btn" 
+                  onClick={handleCreatePrivateLobby}
+                  style={{ margin: 0, padding: '6px 12px', fontSize: '10px', width: 'auto', background: 'rgba(251, 191, 36, 0.1)', border: '1px solid var(--neon-gold)', color: 'var(--neon-gold)' }}
+                >
+                  GENERAR CÓDIGO ZK 🔑
+                </button>
+              </div>
+
+              {/* Guest Section */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px', minWidth: '220px' }}>
+                <span style={{ fontSize: '9px', color: '#fff', fontWeight: 'bold' }}>UNIRSE CON CÓDIGO INVITACIÓN (PREIMAGE):</span>
+                <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                  <input 
+                    type="text" 
+                    placeholder="Ej. spicy-habanero-cheese" 
+                    value={inviteCode}
+                    onChange={(e) => setInviteCode(e.target.value)}
+                    style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontSize: '10px', padding: '5px 10px', borderRadius: '6px', flex: 1 }}
+                  />
+                  <button 
+                    className="console-btn" 
+                    onClick={handleJoinPrivateLobby}
+                    style={{ margin: 0, padding: '5px 12px', fontSize: '10px', width: 'auto' }}
+                  >
+                    UNIRSE ⚔️
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          )}
 
           {/* Fila de Depuración de WebSocket */}
           <div className="ws-debug-row" style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', background: 'rgba(0,0,0,0.3)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
@@ -260,4 +352,3 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
     </div>
   );
 };
-

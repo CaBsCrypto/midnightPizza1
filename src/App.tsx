@@ -226,13 +226,14 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (isWSConnected && lobbyStatus === 'searching') {
       addLog('🔌 Conectado a Go API WebSocket. Buscando oponente...', 'success');
-      sendWSMessage('start_matchmaking', {
-        chefId: walletAddress || 'Pizzaiolo_Anonimo',
-        merkleRoot: merkleRoot,
-        board: playerBoard
-      });
+      const payload = (window as any)._pendingLobbyPayload || {
+        playerId: walletAddress || 'Pizzaiolo_Anonimo',
+        username: walletAddress ? `Chef_${walletAddress.slice(0, 6)}` : 'Chef_Anonimo',
+      };
+      sendWSMessage('join_lobby', payload);
+      (window as any)._pendingLobbyPayload = null;
     }
-  }, [isWSConnected, lobbyStatus, walletAddress, merkleRoot, playerBoard, sendWSMessage, addLog]);
+  }, [isWSConnected, lobbyStatus, walletAddress, sendWSMessage, addLog]);
 
   // Simulación: Cargar tablero de prueba
   useEffect(() => {
@@ -265,19 +266,23 @@ export const App: React.FC = () => {
   }, [playerBoard, playerSalt, isWalletConnected, savePrivateBoardAndSalt, addZKLog]);
 
   // Manejar el inicio de matchmaking
-  const handleStartMatchmaking = () => {
+  const handleStartMatchmaking = (inviteHash?: string, invitePreimage?: string) => {
     PizzeriaAudio.playClick();
     setLobbyStatus('searching');
-    addLog('Buscando oponente calificado en Midnight L2...', 'info');
+    addLog(inviteHash ? 'Creando sala privada ZK (Hospedando)...' : invitePreimage ? 'Uniéndose a sala privada ZK...' : 'Buscando oponente público en Midnight L2...', 'info');
     
+    const payload = {
+      playerId: walletAddress || 'Pizzaiolo_Anonimo',
+      username: walletAddress ? `Chef_${walletAddress.slice(0, 6)}` : 'Chef_Anonimo',
+      inviteHash: inviteHash,
+      invitePreimage: invitePreimage
+    };
+
     if (!isWSConnected) {
+      (window as any)._pendingLobbyPayload = payload;
       connectWS(wsUrl);
     } else {
-      sendWSMessage('start_matchmaking', {
-        chefId: walletAddress || 'Pizzaiolo_Anonimo',
-        merkleRoot: merkleRoot,
-        board: playerBoard
-      });
+      sendWSMessage('join_lobby', payload);
     }
   };
 
