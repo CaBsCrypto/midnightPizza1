@@ -159,7 +159,9 @@ export const HUD: React.FC<HUDProps> = ({
         <div className="metric-card">
           <span className="metric-label">ZK PRIVACY</span>
           <div className="metric-value-container">
-            <span className="metric-value" style={{ color: 'var(--neon-green)', textShadow: '0 0 5px var(--neon-green)' }}>SHIELDED</span>
+            <span className="metric-value" style={{ color: 'var(--neon-green)', textShadow: '0 0 5px var(--neon-green)' }}>
+              {isWalletConnected && walletAddress ? `SHIELDED: ${formatAddress(walletAddress)}` : 'SHIELDED'}
+            </span>
           </div>
         </div>
       </div>
