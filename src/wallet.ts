@@ -46,11 +46,12 @@ export class PizzeriaWallet {
       }
 
       // Connect via standard cardano/midnight lace connector (mnLace is standard for Midnight L2)
+      // Priorizar explícitamente window.midnight para evitar interceptaciones del Lace Cardano estándar
       const connector = 
         window.midnight?.mnLace || 
         window.midnight?.lace || 
-        window.cardano?.lace || 
-        window.cardano?.mnLace;
+        window.cardano?.mnLace ||
+        window.cardano?.lace;
         
       if (!connector) return false;
 
