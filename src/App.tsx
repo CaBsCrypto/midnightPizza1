@@ -6,6 +6,7 @@ import { GameBoard } from './components/GameBoard';
 import { Console, LogLine } from './components/Console';
 import { useWebSockets } from './hooks/useWebSockets';
 import { useWallet } from './hooks/useWallet';
+import { useStellarWallet } from './hooks/useStellarWallet';
 import { useGameAPI } from './hooks/useGameAPI';
 import { Friend, GameState } from './simulation';
 import { PizzeriaAudio } from './audio';
@@ -86,6 +87,12 @@ export const App: React.FC = () => {
     getPrivateBoardAndSalt,
     validateBoardAgainstCommitment
   } = useWallet();
+  const {
+    isConnected: isStellarConnected,
+    stellarAddress,
+    connectStellar,
+    disconnectStellar
+  } = useStellarWallet();
   const { registerChef, submitBoardCommitment, sendBiteMove } = useGameAPI();
 
   const [playerSalt] = useState<Uint8Array>(() => {
@@ -423,7 +430,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* HUD Superior */}
+       {/* HUD Superior */}
       <HUD 
         chefScore={playerScore}
         gasFee={walletBalance?.dust || '0.00'}
@@ -435,6 +442,10 @@ export const App: React.FC = () => {
         playerHP={playerHP}
         rivalHP={rivalHP}
         rivalName={rivalChef?.name}
+        isStellarConnected={isStellarConnected}
+        stellarAddress={stellarAddress}
+        onConnectStellar={connectStellar}
+        onDisconnectStellar={disconnectStellar}
       />
 
       {/* Combat Control Center */}

@@ -11,6 +11,11 @@ interface HUDProps {
   playerHP: number;
   rivalHP: number;
   rivalName?: string;
+  // Stellar integration props
+  isStellarConnected: boolean;
+  stellarAddress: string;
+  onConnectStellar: (username: string) => void;
+  onDisconnectStellar: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -23,7 +28,11 @@ export const HUD: React.FC<HUDProps> = ({
   onOpenRules,
   playerHP,
   rivalHP,
-  rivalName = 'Rival Chef'
+  rivalName = 'Rival Chef',
+  isStellarConnected,
+  stellarAddress,
+  onConnectStellar,
+  onDisconnectStellar
 }) => {
   // Render de vidas de corazones pixel art cyberpunk
   const renderHearts = (hp: number) => {
@@ -60,7 +69,7 @@ export const HUD: React.FC<HUDProps> = ({
         <span className="hud-emoji" style={{ fontSize: '28px', filter: 'drop-shadow(0 0 8px #ef4444)' }}>🍕</span>
         <div className="hud-title-block">
           <h1 style={{ fontFamily: 'Orbitron', fontWeight: 900, letterSpacing: '1px' }}>CLASH OF PIZZAS</h1>
-          <span className="hud-subtitle">Spicy Challenge • Midnight ZK L2 Arena</span>
+          <span className="hud-subtitle">Spicy Challenge • Stellar Soroban & ZK Arena</span>
         </div>
         
         <button 
@@ -83,47 +92,50 @@ export const HUD: React.FC<HUDProps> = ({
           💡 REGLAS
         </button>
 
-        {isWalletConnected ? (
+        {isStellarConnected ? (
           <button 
             className="console-btn" 
-            onClick={onDisconnectWallet}
+            onClick={onDisconnectStellar}
             style={{ 
               marginLeft: '10px', 
               padding: '6px 14px', 
               fontSize: '10px', 
-              background: 'rgba(239, 68, 68, 0.1)', 
-              border: '2px solid #ef4444', 
-              color: '#fca5a5', 
+              background: 'rgba(16, 185, 129, 0.1)', 
+              border: '2px solid var(--neon-green)', 
+              color: '#a7f3d0', 
               fontFamily: 'Orbitron', 
               cursor: 'pointer', 
               borderRadius: '8px', 
               fontWeight: 800, 
               width: 'auto',
-              boxShadow: '0 0 10px rgba(239, 68, 68, 0.25)'
+              boxShadow: '0 0 10px rgba(16, 185, 129, 0.25)'
             }}
           >
-            🔑 {formatAddress(walletAddress)} [DESCONECTAR]
+            🚀 STELLAR: {formatAddress(stellarAddress)} [DESCONECTAR]
           </button>
         ) : (
           <button 
             className="console-btn" 
-            onClick={onConnectWallet}
+            onClick={() => {
+              const username = prompt('Ingresa tu nombre de Chef para registrar tu Stellar Passkey:');
+              if (username) onConnectStellar(username);
+            }}
             style={{ 
               marginLeft: '10px', 
               padding: '6px 14px', 
               fontSize: '10px', 
-              background: 'rgba(99, 102, 241, 0.1)', 
-              border: '2px solid #6366f1', 
-              color: '#a5b4fc', 
+              background: 'rgba(59, 130, 246, 0.1)', 
+              border: '2px solid #3b82f6', 
+              color: '#93c5fd', 
               fontFamily: 'Orbitron', 
               cursor: 'pointer', 
               borderRadius: '8px', 
               fontWeight: 800, 
               width: 'auto',
-              boxShadow: '0 0 10px rgba(99, 102, 241, 0.25)'
+              boxShadow: '0 0 10px rgba(59, 130, 246, 0.25)'
             }}
           >
-            🔑 CONECTAR LACE WALLET
+            🚀 STELLAR PASSKEYS
           </button>
         )}
       </div>
@@ -153,21 +165,21 @@ export const HUD: React.FC<HUDProps> = ({
           <span className="metric-label">GAS FEE</span>
           <div className="metric-value-container">
             <span className="metric-value">{gasFee}</span>
-            <span className="metric-unit">tDUST</span>
+            <span className="metric-unit">XLM</span>
           </div>
         </div>
         <div className="metric-card">
           <span className="metric-label">ZK PRIVACY</span>
           <div className="metric-value-container">
             <span className="metric-value" style={{ color: 'var(--neon-green)', textShadow: '0 0 5px var(--neon-green)' }}>
-              {isWalletConnected && walletAddress ? `SHIELDED: ${formatAddress(walletAddress)}` : 'SHIELDED'}
+              {isStellarConnected && stellarAddress ? `SHIELDED: ${formatAddress(stellarAddress)}` : 'SHIELDED'}
             </span>
           </div>
         </div>
       </div>
 
       <div className="hud-global-status" style={{ fontSize: '11px', fontFamily: 'var(--font-orbitron)', color: '#64748b' }}>
-        NETWORK: <span style={{ color: 'var(--neon-green)', fontWeight: 'bold' }}>MIDNIGHT_L2 (24ms)</span>
+        NETWORK: <span style={{ color: 'var(--neon-green)', fontWeight: 'bold' }}>STELLAR_TESTNET Soroban (12ms)</span>
       </div>
     </header>
   );
