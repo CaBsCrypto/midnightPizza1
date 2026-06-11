@@ -90,6 +90,7 @@ export const App: React.FC = () => {
   const {
     isConnected: isStellarConnected,
     stellarAddress,
+    walletType,
     connectStellar,
     disconnectStellar
   } = useStellarWallet();
@@ -444,6 +445,7 @@ export const App: React.FC = () => {
         rivalName={rivalChef?.name}
         isStellarConnected={isStellarConnected}
         stellarAddress={stellarAddress}
+        walletType={walletType}
         onConnectStellar={connectStellar}
         onDisconnectStellar={disconnectStellar}
       />

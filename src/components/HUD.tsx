@@ -14,7 +14,8 @@ interface HUDProps {
   // Stellar integration props
   isStellarConnected: boolean;
   stellarAddress: string;
-  onConnectStellar: (username: string) => void;
+  walletType?: string | null;
+  onConnectStellar: (type: any, username?: string) => void;
   onDisconnectStellar: () => void;
 }
 
@@ -31,6 +32,7 @@ export const HUD: React.FC<HUDProps> = ({
   rivalName = 'Rival Chef',
   isStellarConnected,
   stellarAddress,
+  walletType,
   onConnectStellar,
   onDisconnectStellar
 }) => {
@@ -111,15 +113,27 @@ export const HUD: React.FC<HUDProps> = ({
               boxShadow: '0 0 10px rgba(16, 185, 129, 0.25)'
             }}
           >
-            🚀 STELLAR: {formatAddress(stellarAddress)} [DESCONECTAR]
+            🚀 {walletType ? walletType.toUpperCase() : 'STELLAR'}: {formatAddress(stellarAddress)} [DESCONECTAR]
           </button>
         ) : (
-          <button 
-            className="console-btn" 
-            onClick={() => {
-              const username = prompt('Ingresa tu nombre de Chef para registrar tu Stellar Passkey:');
-              if (username) onConnectStellar(username);
+          <select
+            className="console-btn"
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === 'passkey') {
+                const username = prompt('Ingresa tu nombre de Chef para registrar tu Stellar Passkey:');
+                if (username) onConnectStellar('passkey', username);
+              } else if (val === 'freighter') {
+                onConnectStellar('freighter');
+              } else if (val === 'albedo') {
+                onConnectStellar('albedo');
+              } else if (val === 'google') {
+                onConnectStellar('google');
+              }
+              // Reset
+              e.target.value = '';
             }}
+            defaultValue=""
             style={{ 
               marginLeft: '10px', 
               padding: '6px 14px', 
@@ -132,11 +146,16 @@ export const HUD: React.FC<HUDProps> = ({
               borderRadius: '8px', 
               fontWeight: 800, 
               width: 'auto',
-              boxShadow: '0 0 10px rgba(59, 130, 246, 0.25)'
+              boxShadow: '0 0 10px rgba(59, 130, 246, 0.25)',
+              outline: 'none'
             }}
           >
-            🚀 STELLAR PASSKEYS
-          </button>
+            <option value="" disabled>🚀 CONECTAR STELLAR</option>
+            <option value="passkey" style={{ background: '#0f172a', color: '#fff' }}>🔑 STELLAR PASSKEYS</option>
+            <option value="freighter" style={{ background: '#0f172a', color: '#fff' }}>📦 FREIGHTER WALLET</option>
+            <option value="albedo" style={{ background: '#0f172a', color: '#fff' }}>🌌 ALBEDO SIGNER</option>
+            <option value="google" style={{ background: '#0f172a', color: '#fff' }}>📧 GOOGLE / GMAIL (PRIVY)</option>
+          </select>
         )}
       </div>
 
