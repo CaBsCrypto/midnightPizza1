@@ -15,7 +15,7 @@ interface HUDProps {
   isStellarConnected: boolean;
   stellarAddress: string;
   walletType?: string | null;
-  onConnectStellar: (type: any, username?: string) => void;
+  onOpenWalletSelector: () => void;
   onDisconnectStellar: () => void;
 }
 
@@ -33,7 +33,7 @@ export const HUD: React.FC<HUDProps> = ({
   isStellarConnected,
   stellarAddress,
   walletType,
-  onConnectStellar,
+  onOpenWalletSelector,
   onDisconnectStellar
 }) => {
   // Render de vidas de corazones pixel art cyberpunk
@@ -116,24 +116,9 @@ export const HUD: React.FC<HUDProps> = ({
             🚀 {walletType ? walletType.toUpperCase() : 'STELLAR'}: {formatAddress(stellarAddress)} [DESCONECTAR]
           </button>
         ) : (
-          <select
+          <button
             className="console-btn"
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === 'passkey') {
-                const username = prompt('Ingresa tu nombre de Chef para registrar tu Stellar Passkey:');
-                if (username) onConnectStellar('passkey', username);
-              } else if (val === 'freighter') {
-                onConnectStellar('freighter');
-              } else if (val === 'albedo') {
-                onConnectStellar('albedo');
-              } else if (val === 'google') {
-                onConnectStellar('google');
-              }
-              // Reset
-              e.target.value = '';
-            }}
-            defaultValue=""
+            onClick={onOpenWalletSelector}
             style={{ 
               marginLeft: '10px', 
               padding: '6px 14px', 
@@ -150,12 +135,8 @@ export const HUD: React.FC<HUDProps> = ({
               outline: 'none'
             }}
           >
-            <option value="" disabled>🚀 CONECTAR STELLAR</option>
-            <option value="passkey" style={{ background: '#0f172a', color: '#fff' }}>🔑 STELLAR PASSKEYS</option>
-            <option value="freighter" style={{ background: '#0f172a', color: '#fff' }}>📦 FREIGHTER WALLET</option>
-            <option value="albedo" style={{ background: '#0f172a', color: '#fff' }}>🌌 ALBEDO SIGNER</option>
-            <option value="google" style={{ background: '#0f172a', color: '#fff' }}>📧 GOOGLE / GMAIL (PRIVY)</option>
-          </select>
+            🚀 CONECTAR STELLAR
+          </button>
         )}
       </div>
 

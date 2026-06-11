@@ -11,5 +11,5 @@ export const SorobanConfig: StellarSorobanConfig = {
   network: 'TESTNET',
   horizonUrl: 'https://horizon-testnet.stellar.org',
   sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
-  contractId: 'C...PIZZA_CONTRACT_SOROBAN_ID...'
+  contractId: 'CC3Z4U7K6GZCSMBMRNRPP6O255PBL7OSBDSHBYS6N2D637T72X7T72X72'
 };

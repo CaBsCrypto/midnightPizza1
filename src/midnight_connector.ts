@@ -71,12 +71,13 @@ export class BrowserPrivateStateProvider implements types.PrivateStateProvider<s
     }
   }
 
-  public async setSigningKey(address: ContractAddress, signingKey: Uint8Array): Promise<void> {
-    const hexKey = Array.from(signingKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  public async setSigningKey(address: ContractAddress, signingKey: any): Promise<void> {
+    const keyBytes = (typeof signingKey === 'string' ? new TextEncoder().encode(signingKey) : signingKey) as Uint8Array;
+    const hexKey = Array.from(keyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
     localStorage.setItem(`${this.keyPrefix}${address}`, hexKey);
   }
 
-  public async getSigningKey(address: ContractAddress): Promise<Uint8Array | null> {
+  public async getSigningKey(address: ContractAddress): Promise<any> {
     const hexKey = localStorage.getItem(`${this.keyPrefix}${address}`);
     if (!hexKey) return null;
     const array = new Uint8Array(hexKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
@@ -365,8 +366,8 @@ export class MidnightConnector {
    */
   public getProviders(): types.MidnightProviders<any, any, any> {
     return {
-      privateStateProvider: this.privateStateProvider,
-      publicDataProvider: this.publicDataProvider,
+      privateStateProvider: this.privateStateProvider as any,
+      publicDataProvider: this.publicDataProvider as any,
       zkConfigProvider: {
         getZKConfig: async (circuitId: string) => ({
           circuitId,
@@ -374,18 +375,18 @@ export class MidnightConnector {
           verifyingKey: new Uint8Array([4, 5, 6])
         })
       } as any,
-      proofProvider: this.proofProvider,
+      proofProvider: this.proofProvider as any,
       walletProvider: {
         walletIdentifier: 'mnLace',
         coinPublicKey: '0x0000000000000000000000000000000000000000000000000000000000000001' as any,
         signingKey: new Uint8Array(32)
       } as any,
       midnightProvider: {
-        submitTx: async (tx: any) => {
+        submitTx: async (tx: any): Promise<string> => {
           console.log('📡 Transacción Compact enviada on-chain mediante el nodo Midnight:', tx);
-          return { txId: tx.txId };
+          return tx.txId || 'tx_mock_hash';
         }
-      }
+      } as any
     };
   }
 }

@@ -83,16 +83,23 @@ type LobbyErrorPayload struct {
 	Message string `json:"message"`
 }
 
+// WSMessage representa un frame de WebSocket saliente con su opcode
+type WSMessage struct {
+	opcode  byte
+	payload []byte
+}
+
 // Client representa un jugador conectado mediante WebSocket
 type Client struct {
 	conn           net.Conn
-	send           chan []byte
+	send           chan WSMessage
 	playerID       string
 	username       string
 	inviteHash     string
 	invitePreimage string
 	room           *Room
 	isClosed       bool
+	lastSeen       time.Time
 	mu             sync.Mutex
 }
 
@@ -112,6 +119,8 @@ type Server struct {
 	pendingMu     sync.Mutex
 	inviteLobbies map[string]*Client // Mapa hash -> Host Client
 	inviteMu      sync.Mutex
+	clients       map[*Client]bool
+	clientsMu     sync.Mutex
 	register      chan *Client
 	unregister    chan *Client
 }
@@ -120,10 +129,12 @@ func NewServer() *Server {
 	s := &Server{
 		rooms:         make(map[string]*Room),
 		inviteLobbies: make(map[string]*Client),
+		clients:       make(map[*Client]bool),
 		register:      make(chan *Client),
 		unregister:    make(chan *Client),
 	}
 	go s.run()
+	s.startHeartbeatTicker()
 	return s
 }
 
@@ -133,13 +144,47 @@ func (s *Server) run() {
 		select {
 		case client := <-s.register:
 			log.Printf("Nuevo cliente registrado temporalmente: %s", client.conn.RemoteAddr().String())
+			s.clientsMu.Lock()
+			s.clients[client] = true
+			s.clientsMu.Unlock()
 
 		case client := <-s.unregister:
 			log.Printf("Cliente desregistrado: %s (PlayerID: %s)", client.conn.RemoteAddr().String(), client.playerID)
+			s.clientsMu.Lock()
+			delete(s.clients, client)
+			s.clientsMu.Unlock()
 			s.removeFromLobby(client)
 			s.handleDisconnect(client)
 		}
 	}
+}
+
+// startHeartbeatTicker monitorea periódicamente la salud de las conexiones enviando pings
+func (s *Server) startHeartbeatTicker() {
+	ticker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range ticker.C {
+			s.clientsMu.Lock()
+			now := time.Now()
+			var deadClients []*Client
+			for client := range s.clients {
+				client.mu.Lock()
+				// Si no responde en más de 65 segundos, desconectar
+				if now.Sub(client.lastSeen) > 65*time.Second {
+					deadClients = append(deadClients, client)
+				} else {
+					go client.sendPing()
+				}
+				client.mu.Unlock()
+			}
+			s.clientsMu.Unlock()
+
+			for _, client := range deadClients {
+				log.Printf("Desconectando cliente inactivo por Ping Timeout: %s", client.conn.RemoteAddr().String())
+				client.conn.Close()
+			}
+		}
+	}()
 }
 
 // addToLobby agrega un jugador a la cola del Matchmaker o lo asocia vía ZK Preimage
@@ -215,7 +260,6 @@ func (s *Server) removeFromLobby(client *Client) {
 	if client.inviteHash != "" {
 		delete(s.inviteLobbies, client.inviteHash)
 	}
-	// Buscar por valor por si acaso
 	for hash, host := range s.inviteLobbies {
 		if host == client {
 			delete(s.inviteLobbies, hash)
@@ -308,9 +352,35 @@ func (c *Client) sendBytes(msg []byte) {
 		return
 	}
 	select {
-	case c.send <- msg:
+	case c.send <- WSMessage{opcode: 1, payload: msg}:
 	default:
 		log.Printf("Buffer de escritura lleno para cliente: %s", c.conn.RemoteAddr().String())
+		c.conn.Close()
+	}
+}
+
+func (c *Client) sendPing() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.isClosed {
+		return
+	}
+	select {
+	case c.send <- WSMessage{opcode: 9, payload: nil}:
+	default:
+		c.conn.Close()
+	}
+}
+
+func (c *Client) sendPong(payload []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.isClosed {
+		return
+	}
+	select {
+	case c.send <- WSMessage{opcode: 10, payload: payload}:
+	default:
 		c.conn.Close()
 	}
 }
@@ -323,10 +393,10 @@ func (c *Client) writePump() {
 	for {
 		msg, ok := <-c.send
 		if !ok {
-			writeTextMessage(c.conn, []byte{})
+			writeFrame(c.conn, 8, []byte{}) // Close frame
 			return
 		}
-		if err := writeTextMessage(c.conn, msg); err != nil {
+		if err := writeFrame(c.conn, msg.opcode, msg.payload); err != nil {
 			log.Printf("Error escribiendo en WebSocket: %v", err)
 			return
 		}
@@ -344,13 +414,29 @@ func (c *Client) readPump(server *Server) {
 		c.conn.Close()
 	}()
 
+	c.mu.Lock()
+	c.lastSeen = time.Now()
+	c.mu.Unlock()
+
 	for {
-		payload, err := readMessage(c.conn)
+		payload, opcode, err := readMessage(c.conn)
 		if err != nil {
 			if err != io.EOF {
 				log.Printf("Error leyendo mensaje de WebSocket: %v", err)
 			}
 			break
+		}
+
+		c.mu.Lock()
+		c.lastSeen = time.Now()
+		c.mu.Unlock()
+
+		if opcode == 9 { // Ping
+			c.sendPong(payload)
+			continue
+		}
+		if opcode == 10 { // Pong
+			continue
 		}
 
 		var ev Event
@@ -479,16 +565,16 @@ func upgradeToWebSocket(w http.ResponseWriter, r *http.Request) (net.Conn, error
 }
 
 // readMessage analiza un frame de datos WebSocket según el estándar de enmascaramiento
-func readMessage(conn net.Conn) ([]byte, error) {
+func readMessage(conn net.Conn) ([]byte, byte, error) {
 	header := make([]byte, 2)
 	_, err := io.ReadFull(conn, header)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	opcode := header[0] & 0x0f
 	if opcode == 8 {
-		return nil, io.EOF
+		return nil, 0, io.EOF
 	}
 
 	masked := (header[1] & 0x80) != 0
@@ -498,14 +584,14 @@ func readMessage(conn net.Conn) ([]byte, error) {
 		lenBuf := make([]byte, 2)
 		_, err = io.ReadFull(conn, lenBuf)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		payloadLen = int64(lenBuf[0])<<8 | int64(lenBuf[1])
 	} else if payloadLen == 127 {
 		lenBuf := make([]byte, 8)
 		_, err = io.ReadFull(conn, lenBuf)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		payloadLen = 0
 		for i := 0; i < 8; i++ {
@@ -518,29 +604,31 @@ func readMessage(conn net.Conn) ([]byte, error) {
 		maskKey = make([]byte, 4)
 		_, err = io.ReadFull(conn, maskKey)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
 	payload := make([]byte, payloadLen)
-	_, err = io.ReadFull(conn, payload)
-	if err != nil {
-		return nil, err
+	if payloadLen > 0 {
+		_, err = io.ReadFull(conn, payload)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 
-	if masked {
+	if masked && payloadLen > 0 {
 		for i := int64(0); i < payloadLen; i++ {
 			payload[i] ^= maskKey[i%4]
 		}
 	}
 
-	return payload, nil
+	return payload, opcode, nil
 }
 
-// writeTextMessage empaqueta y envía un frame de texto WebSocket
-func writeTextMessage(conn net.Conn, msg []byte) error {
+// writeFrame empaqueta y envía un frame WebSocket con FIN bit y el opcode respectivo
+func writeFrame(conn net.Conn, opcode byte, msg []byte) error {
 	var header []byte
-	header = append(header, 0x81)
+	header = append(header, 0x80|opcode) // FIN bit set + opcode
 
 	length := len(msg)
 	if length <= 125 {
@@ -558,8 +646,11 @@ func writeTextMessage(conn net.Conn, msg []byte) error {
 	if _, err := conn.Write(header); err != nil {
 		return err
 	}
-	_, err := conn.Write(msg)
-	return err
+	if length > 0 {
+		_, err := conn.Write(msg)
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -581,7 +672,7 @@ func main() {
 
 		client := &Client{
 			conn: conn,
-			send: make(chan []byte, 256),
+			send: make(chan WSMessage, 256),
 		}
 
 		server.register <- client

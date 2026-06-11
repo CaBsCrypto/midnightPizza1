@@ -11,6 +11,8 @@ import { useGameAPI } from './hooks/useGameAPI';
 import { Friend, GameState } from './simulation';
 import { PizzeriaAudio } from './audio';
 import { MidnightZKSDK } from './contract';
+import { submitSorobanBite } from './stellar_contract';
+import { SorobanConfig } from './stellar_config';
 
 export const App: React.FC = () => {
   // --- Estados de Juego ---
@@ -71,6 +73,11 @@ export const App: React.FC = () => {
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [showUniverseOverlay, setShowUniverseOverlay] = useState(true);
+  const [showStellarWalletModal, setShowStellarWalletModal] = useState(false);
+  const [walletSelectorTab, setWalletSelectorTab] = useState<'main' | 'passkey' | 'google'>('main');
+  const [stellarUsername, setStellarUsername] = useState('Chef_Soroban');
+  const [googleEmail, setGoogleEmail] = useState('');
+  const [isWalletConnecting, setIsWalletConnecting] = useState(false);
 
   // --- Custom Hooks & WebSocket Config ---
   const [wsUrl, setWsUrl] = useState(() => (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws');
@@ -90,6 +97,7 @@ export const App: React.FC = () => {
   const {
     isConnected: isStellarConnected,
     stellarAddress,
+    stellarBalance,
     walletType,
     connectStellar,
     disconnectStellar
@@ -434,7 +442,7 @@ export const App: React.FC = () => {
        {/* HUD Superior */}
       <HUD 
         chefScore={playerScore}
-        gasFee={walletBalance?.dust || '0.00'}
+        gasFee={isStellarConnected ? stellarBalance : (walletBalance?.dust || '0.00')}
         isWalletConnected={isWalletConnected}
         walletAddress={walletAddress}
         onConnectWallet={connectWallet}
@@ -446,7 +454,10 @@ export const App: React.FC = () => {
         isStellarConnected={isStellarConnected}
         stellarAddress={stellarAddress}
         walletType={walletType}
-        onConnectStellar={connectStellar}
+        onOpenWalletSelector={() => {
+          setWalletSelectorTab('main');
+          setShowStellarWalletModal(true);
+        }}
         onDisconnectStellar={disconnectStellar}
       />
 
@@ -607,15 +618,31 @@ export const App: React.FC = () => {
                       addZKLog(`[stellar_validation] Compromiso validado: ${computedCommitment}`);
                       addLog('✅ Tablero y salt validados con éxito. Procediendo con Soroban submit_bite...', 'success');
 
-                      // 2. Firmar transacción Soroban simulando Stellar Passkeys
-                      addLog('📡 Invocando contrato Soroban Rust en Stellar Testnet...', 'info');
-                      addZKLog('[soroban_tx] Generando firma criptográfica WebAuthn...');
-                      addZKLog('[soroban_tx] Invocando método submit_bite del contrato...');
+                      // 2. Firmar y enviar transacción Soroban real
+                      addLog('📡 Construyendo transacción Soroban real...', 'info');
+                      addZKLog('[soroban_tx] Conectando con Horizon/RPC de Stellar Testnet...');
                       
-                      await new Promise(resolve => setTimeout(resolve, 1500));
+                      // Hash ZK del tablero para registrar en Soroban
+                      const hashBytes = new Uint8Array(32);
+                      const encoder = new TextEncoder();
+                      const rootEncoded = encoder.encode(merkleRoot);
+                      for (let i = 0; i < 32; i++) {
+                        hashBytes[i] = rootEncoded[i % rootEncoded.length];
+                      }
                       
-                      addLog('🟢 Transacción Soroban confirmada en Stellar Testnet!', 'success');
-                      addZKLog('[soroban_tx] Transacción confirmada. Estado on-chain actualizado.');
+                      addZKLog('[soroban_tx] Firmando invocación del método submit_bite...');
+                      const txHash = await submitSorobanBite({
+                        contractId: SorobanConfig.contractId,
+                        playerAddress: stellarAddress,
+                        row: 1, // Fila de auditoría
+                        col: 1, // Columna de auditoría
+                        zkProofHash: hashBytes,
+                        walletType: walletType || 'google',
+                        secret: localStorage.getItem('clash_stellar_secret')
+                      });
+                      
+                      addLog(`🟢 ¡Transacción Soroban confirmada! Hash: ${txHash}`, 'success');
+                      addZKLog(`[soroban_tx] Confirmada. TxHash: ${txHash.slice(0, 12)}...`);
 
                       // 3. Reclamo de tokens
                       const reward = Math.floor(playerScore / 10) + 100;
@@ -632,6 +659,242 @@ export const App: React.FC = () => {
                 >
                   REVELAR TABLERO & RECLAMAR TRUFAS SOROBAN 👑
                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Conexión de Wallet Stellar */}
+      {showStellarWalletModal && (
+        <div className="modal-overlay active">
+          <div className="modal-card" style={{ width: '450px', background: 'linear-gradient(135deg, #111827, #030712)', border: '2px solid #3b82f6', borderRadius: '20px', padding: '25px', color: '#cbd5e1' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px' }}>
+              <h2 style={{ fontFamily: 'Orbitron', color: '#93c5fd', fontWeight: 900, fontSize: '15px', margin: 0 }}>🚀 CONECTAR WALLET STELLAR</h2>
+              <button className="modal-close-btn" onClick={() => setShowStellarWalletModal(false)} style={{ color: '#93c5fd', fontSize: '24px', cursor: 'pointer', background: 'none', border: 'none' }}>×</button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              {isWalletConnecting ? (
+                <div style={{ textAlign: 'center', padding: '30px 10px' }}>
+                  <div className="loading-spinner" style={{ border: '4px solid rgba(59,130,246,0.1)', borderTop: '4px solid #3b82f6', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite', margin: '0 auto 15px auto' }}></div>
+                  <p style={{ fontFamily: 'Orbitron', fontSize: '12px', color: '#93c5fd', margin: 0 }}>Estableciendo conexión segura...</p>
+                </div>
+              ) : walletSelectorTab === 'main' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <p style={{ fontSize: '12px', color: '#94a3b8', margin: '0 0 10px 0', textAlign: 'center' }}>
+                    Selecciona uno de los siguientes proveedores de conexión real para Soroban y Stellar:
+                  </p>
+                  
+                  {/* Freighter Wallet */}
+                  <button 
+                    className="modal-action-btn"
+                    onClick={async () => {
+                      setIsWalletConnecting(true);
+                      const success = await connectStellar('freighter');
+                      setIsWalletConnecting(false);
+                      if (success) setShowStellarWalletModal(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '15px',
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      color: '#fff',
+                      padding: '12px 15px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontFamily: 'Orbitron',
+                      fontSize: '11px',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span style={{ fontSize: '24px' }}>📦</span>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 'bold', color: '#93c5fd' }}>FREIGHTER WALLET</span>
+                      <span style={{ fontSize: '9px', color: '#64748b' }}>Extensión de navegador oficial de SDF</span>
+                    </div>
+                  </button>
+
+                  {/* Albedo Signer */}
+                  <button 
+                    className="modal-action-btn"
+                    onClick={async () => {
+                      setIsWalletConnecting(true);
+                      const success = await connectStellar('albedo');
+                      setIsWalletConnecting(false);
+                      if (success) setShowStellarWalletModal(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '15px',
+                      background: 'rgba(168, 85, 247, 0.1)',
+                      border: '1px solid rgba(168, 85, 247, 0.3)',
+                      color: '#fff',
+                      padding: '12px 15px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontFamily: 'Orbitron',
+                      fontSize: '11px',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span style={{ fontSize: '24px' }}>🌌</span>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 'bold', color: '#c084fc' }}>ALBEDO SIGNER</span>
+                      <span style={{ fontSize: '9px', color: '#64748b' }}>Firma web sin extensiones</span>
+                    </div>
+                  </button>
+
+                  {/* Google / Privy */}
+                  <button 
+                    className="modal-action-btn"
+                    onClick={() => setWalletSelectorTab('google')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '15px',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      color: '#fff',
+                      padding: '12px 15px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontFamily: 'Orbitron',
+                      fontSize: '11px',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span style={{ fontSize: '24px' }}>📧</span>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 'bold', color: '#fca5a5' }}>GOOGLE / GMAIL (PRIVY)</span>
+                      <span style={{ fontSize: '9px', color: '#64748b' }}>Autenticación social con embedded wallet</span>
+                    </div>
+                  </button>
+
+                  {/* Stellar Passkeys */}
+                  <button 
+                    className="modal-action-btn"
+                    onClick={() => setWalletSelectorTab('passkey')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '15px',
+                      background: 'rgba(245, 158, 11, 0.1)',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      color: '#fff',
+                      padding: '12px 15px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontFamily: 'Orbitron',
+                      fontSize: '11px',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <span style={{ fontSize: '24px' }}>🔑</span>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontWeight: 'bold', color: '#fcd34d' }}>STELLAR PASSKEYS</span>
+                      <span style={{ fontSize: '9px', color: '#64748b' }}>Ingreso biométrico sin contraseña</span>
+                    </div>
+                  </button>
+                </div>
+              ) : walletSelectorTab === 'passkey' ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0 }}>
+                    Registra o autentica tu cuenta usando la llave de seguridad nativa de tu dispositivo (FaceID, TouchID o pin local):
+                  </p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 'bold', fontFamily: 'Orbitron' }}>ALIAS DE CHEF / USERNAME</label>
+                    <input 
+                      type="text" 
+                      value={stellarUsername}
+                      onChange={(e) => setStellarUsername(e.target.value)}
+                      style={{ background: '#090d16', border: '1px solid #f59e0b', borderRadius: '8px', padding: '10px', color: '#fff', fontSize: '12px', outline: 'none', fontFamily: 'monospace' }}
+                      placeholder="Chef_Soroban"
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <button 
+                      className="console-btn"
+                      onClick={() => setWalletSelectorTab('main')}
+                      style={{ flex: 1, padding: '10px', fontSize: '11px', border: '1px solid #64748b', color: '#cbd5e1', cursor: 'pointer', borderRadius: '8px' }}
+                    >
+                      VOLVER
+                    </button>
+                    <button 
+                      className="console-btn"
+                      onClick={async () => {
+                        if (!stellarUsername.trim()) {
+                          alert('Por favor ingresa un nombre.');
+                          return;
+                        }
+                        setIsWalletConnecting(true);
+                        const success = await connectStellar('passkey', stellarUsername);
+                        setIsWalletConnecting(false);
+                        if (success) setShowStellarWalletModal(false);
+                      }}
+                      style={{ flex: 2, padding: '10px', fontSize: '11px', border: '2px solid #f59e0b', color: '#fcd34d', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold', background: 'rgba(245, 158, 11, 0.1)' }}
+                    >
+                      REGISTRAR LLAVE 🔑
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '12px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    <span style={{ fontSize: '20px' }}>📧</span>
+                    <span style={{ fontWeight: 'bold', color: '#fff', fontSize: '12px', fontFamily: 'Orbitron' }}>Embedded Wallet via Privy SDK</span>
+                    <span style={{ fontSize: '9.5px', color: '#94a3b8' }}>Se creará una llave privada segura de Stellar vinculada a tu correo de forma descentralizada.</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '10px', color: '#fca5a5', fontWeight: 'bold', fontFamily: 'Orbitron' }}>DIRECCIÓN DE GMAIL / CORREO</label>
+                    <input 
+                      type="email" 
+                      value={googleEmail}
+                      onChange={(e) => setGoogleEmail(e.target.value)}
+                      style={{ background: '#090d16', border: '1px solid #ef4444', borderRadius: '8px', padding: '10px', color: '#fff', fontSize: '12px', outline: 'none', fontFamily: 'monospace' }}
+                      placeholder="tu_chef_correo@gmail.com"
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <button 
+                      className="console-btn"
+                      onClick={() => setWalletSelectorTab('main')}
+                      style={{ flex: 1, padding: '10px', fontSize: '11px', border: '1px solid #64748b', color: '#cbd5e1', cursor: 'pointer', borderRadius: '8px' }}
+                    >
+                      VOLVER
+                    </button>
+                    <button 
+                      className="console-btn"
+                      onClick={async () => {
+                        if (!googleEmail.trim() || !googleEmail.includes('@')) {
+                          alert('Por favor ingresa un Gmail válido.');
+                          return;
+                        }
+                        setIsWalletConnecting(true);
+                        const success = await connectStellar('google', googleEmail);
+                        setIsWalletConnecting(false);
+                        if (success) {
+                          addLog(`📧 Google/Privy Login exitoso para ${googleEmail}. Cuenta Stellar vinculada.`, 'success');
+                          setShowStellarWalletModal(false);
+                        }
+                      }}
+                      style={{ flex: 2, padding: '10px', fontSize: '11px', border: '2px solid #ef4444', color: '#fca5a5', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold', background: 'rgba(239, 68, 68, 0.1)' }}
+                    >
+                      INICIAR SESIÓN CON GOOGLE
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
