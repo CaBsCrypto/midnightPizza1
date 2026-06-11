@@ -28,26 +28,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  // Código Compact de Midnight ZK en tiempo real para visualizar on-chain
-  const compactCodeSnippet = `// SimPizzaDAO Compact Smart Contract
-circuit verify_bite_integrity(
-  secret board: Field[6][6],
-  public row: Field,
-  public col: Field,
-  public claimed_ingredient: Field
-) {
-  // 1. Validar coordenadas de grilla de 6x6
-  assert(row >= 0 && row < 6);
-  assert(col >= 6 && col < 6);
-  
-  // 2. Extraer ingrediente oculto
-  let actual = board[row][col];
-  
-  // 3. Validar consistencia criptográfica
-  assert(actual == claimed_ingredient);
-  
-  // 4. Retornar validez on-chain
-  return;
+  // Código Rust de Soroban Smart Contract para visualizar en el panel de telemetría
+  const sorobanCodeSnippet = `// ClashOfPizzas Soroban Smart Contract
+pub fn submit_bite(
+    env: Env,
+    player: Address,
+    row: u32,
+    col: u32,
+    zk_proof_hash: BytesN<32>
+) -> bool {
+    // 1. Verificar estado de juego activo
+    let active: bool = env.storage().instance().get(&Symbol::new(&env, "active")).unwrap_or(false);
+    assert!(active, "El duelo no está activo");
+
+    // 2. Emitir evento de jugada auditada on-chain en Stellar
+    env.events().publish(
+        (Symbol::new(&env, "bite"), player),
+        (row, col, zk_proof_hash)
+    );
+    true
 }`;
 
   return (
@@ -197,12 +196,12 @@ circuit verify_bite_integrity(
                 </span>
               </div>
 
-              {/* Compact Code Viewer Component */}
+              {/* Soroban Code Viewer Component */}
               <div className="proposal-title" style={{ color: 'var(--neon-gold)', fontSize: '10px', fontWeight: 'bold', fontFamily: 'Orbitron', marginTop: '4px', textAlign: 'left' }}>
-                COMPACT CIRCUIT INTERFACE
+                SOROBAN RUST INTERFACE
               </div>
               <div 
-                id="compactCodeViewer" 
+                id="sorobanCodeViewer" 
                 style={{ 
                   fontFamily: 'monospace', 
                   fontSize: '8px', 
@@ -217,7 +216,7 @@ circuit verify_bite_integrity(
                   textAlign: 'left' 
                 }}
               >
-                <pre style={{ margin: 0 }}>{compactCodeSnippet}</pre>
+                <pre style={{ margin: 0 }}>{sorobanCodeSnippet}</pre>
               </div>
 
               {/* ZK Execution Proof Logs Terminal */}
