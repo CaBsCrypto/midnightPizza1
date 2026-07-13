@@ -3,10 +3,6 @@ import React from 'react';
 interface HUDProps {
   chefScore: number;
   gasFee: string;
-  isWalletConnected: boolean;
-  walletAddress: string;
-  onConnectWallet: () => void;
-  onDisconnectWallet: () => void;
   onOpenRules: () => void;
   playerHP: number;
   rivalHP: number;
@@ -22,10 +18,6 @@ interface HUDProps {
 export const HUD: React.FC<HUDProps> = ({
   chefScore,
   gasFee,
-  isWalletConnected,
-  walletAddress,
-  onConnectWallet,
-  onDisconnectWallet,
   onOpenRules,
   playerHP,
   rivalHP,
@@ -65,13 +57,13 @@ export const HUD: React.FC<HUDProps> = ({
   };
 
   return (
-    <header className="top-hud" style={{ borderBottom: '2px solid rgba(251, 191, 36, 0.2)' }}>
+    <header className="top-hud" style={{ borderBottom: '2px solid rgba(195, 122, 103, 0.25)' }}>
       {/* HUD Brand */}
       <div className="hud-brand">
-        <span className="hud-emoji" style={{ fontSize: '28px', filter: 'drop-shadow(0 0 8px #ef4444)' }}>🍕</span>
+        <span className="hud-emoji" style={{ fontSize: '28px', filter: 'drop-shadow(0 2px 4px rgba(195, 122, 103, 0.3))' }}>🍕</span>
         <div className="hud-title-block">
-          <h1 style={{ fontFamily: 'Orbitron', fontWeight: 900, letterSpacing: '1px' }}>CLASH OF PIZZAS</h1>
-          <span className="hud-subtitle">Spicy Challenge • Stellar Soroban & ZK Arena</span>
+          <h1 style={{ fontFamily: 'Orbitron', fontWeight: 900, letterSpacing: '1px', color: 'var(--neon-red)' }}>SPICY CHALLENGE</h1>
+          <span className="hud-subtitle">Stellar Soroban Arena</span>
         </div>
         
         <button 
@@ -169,10 +161,10 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
         </div>
         <div className="metric-card">
-          <span className="metric-label">ZK PRIVACY</span>
+          <span className="metric-label">SOROBAN AUDIT</span>
           <div className="metric-value-container">
             <span className="metric-value" style={{ color: 'var(--neon-green)', textShadow: '0 0 5px var(--neon-green)' }}>
-              {isStellarConnected && stellarAddress ? `SHIELDED: ${formatAddress(stellarAddress)}` : 'SHIELDED'}
+              {isStellarConnected && stellarAddress ? `ACTIVE: ${formatAddress(stellarAddress)}` : 'INACTIVE'}
             </span>
           </div>
         </div>

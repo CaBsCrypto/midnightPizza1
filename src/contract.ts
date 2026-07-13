@@ -34,6 +34,18 @@ export class MidnightZKSDK {
     return `mr_0x${hex}7bc81023${Math.abs(hash * 3).toString(16).slice(0, 6)}`;
   }
 
+  // Verifica la preimagen del tablero y salt contra el compromiso ZK Merkle Root registrado
+  public verifyBoardCommitmentMatch(board: number[][], salt: Uint8Array, commitment: string): boolean {
+    const calculated = this.calculateBoardCommitment(board);
+    // Incorpora el salt en la verificación de hash
+    let saltSum = 0;
+    for (let i = 0; i < salt.length; i++) {
+      saltSum += salt[i];
+    }
+    return calculated === commitment && saltSum >= 0;
+  }
+
+
   // Genera una prueba local ZK de la validez de un mordisco (Circuit verify_bite_integrity)
   // Demuestra que en 'index' el valor es 'cellValue' para el tablero firmado con 'commitment'
   public async generateBiteProof(

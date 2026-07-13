@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Friend } from '../simulation';
+import { Friend } from '../types';
 
 interface SidebarProps {
   friends: Friend[];
@@ -67,7 +67,7 @@ pub fn submit_bite(
             onClick={() => setActiveTab('zk')} 
             style={{ flex: 1 }}
           >
-            🔐 LEDGER ZK
+            🕵️ AUDITAR SOROBAN
           </button>
         </div>
 
@@ -166,32 +166,32 @@ pub fn submit_bite(
         {/* Tab Panel: LEDGER ZK */}
         {activeTab === 'zk' && (
           <div id="panelZK" className="tab-panel active" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h2 className="section-title">TELEMETRÍA CRYPTO ZK</h2>
+            <h2 className="section-title">TELEMETRÍA DE SOROBAN</h2>
             
             {/* Holographic ZK Debug Visualizer */}
             <div className="midnight-console" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <div style={{ fontSize: '10px', fontFamily: 'Orbitron', color: '#38bdf8', borderBottom: '1px solid rgba(56, 189, 248, 0.2)', paddingBottom: '4px', textAlign: 'left', fontWeight: 'bold' }}>
-                🎛️ ZK PROVER TELEMETRY
+              <div style={{ fontSize: '10px', fontFamily: 'Orbitron', color: '#10b981', borderBottom: '1px solid rgba(16, 185, 129, 0.2)', paddingBottom: '4px', textAlign: 'left', fontWeight: 'bold' }}>
+                🎛️ SOROBAN LEDGER TELEMETRY
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '9px', textAlign: 'left', background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                <div>Prover Model: <span style={{ color: '#fff', fontWeight: 'bold' }}>PLONK-WASM</span></div>
-                <div>Witness Time: <span style={{ color: '#34d399', fontWeight: 'bold' }}>~850ms</span></div>
-                <div>Proof System: <span style={{ color: '#fff', fontWeight: 'bold' }}>ZK-SNARK</span></div>
-                <div>Constraint Gates: <span style={{ color: '#fb7185', fontWeight: 'bold' }}>12,840</span></div>
-                <div style={{ gridColumn: 'span 2' }}>Proof Payload: <span style={{ color: '#c084fc', fontFamily: 'monospace' }}>608 bytes (compressed)</span></div>
+                <div>Network Node: <span style={{ color: '#fff', fontWeight: 'bold' }}>Stellar Testnet</span></div>
+                <div>Block Time: <span style={{ color: '#34d399', fontWeight: 'bold' }}>~3.5s</span></div>
+                <div>Contract Engine: <span style={{ color: '#fff', fontWeight: 'bold' }}>Soroban WASM</span></div>
+                <div>Fuel Sponsor: <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>Fee-Bump OK</span></div>
+                <div style={{ gridColumn: 'span 2' }}>Ledger RPC: <span style={{ color: '#a7f3d0', fontFamily: 'monospace' }}>soroban-testnet.stellar.org</span></div>
               </div>
 
               <div className="console-row" style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '4px' }}>
                 <span>LEDGER STATUS:</span>
                 <span className="status-badge status-green" style={{ boxShadow: 'none', padding: '2px 6px', fontSize: '9px', background: '#10b981', color: '#fff', borderRadius: '4px' }}>
-                  SHIELDED STATE
+                  SYNCED / ON-CHAIN
                 </span>
               </div>
 
               <div className="console-row" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '3px', fontSize: '11px' }}>
-                <span>PUBLIC COMMITMENT:</span>
-                <span className="console-hash" id="merkleRoot" style={{ fontSize: '9px', wordBreak: 'break-all', fontFamily: 'monospace', color: 'var(--neon-gold)', background: 'rgba(0,0,0,0.4)', padding: '4px', borderRadius: '4px', width: '100%', boxSizing: 'border-box', textAlign: 'left' }}>
+                <span>SOROBAN CONTRACT ID:</span>
+                <span className="console-hash" id="merkleRoot" style={{ fontSize: '8.5px', wordBreak: 'break-all', fontFamily: 'monospace', color: 'var(--neon-gold)', background: 'rgba(0,0,0,0.4)', padding: '4px', borderRadius: '4px', width: '100%', boxSizing: 'border-box', textAlign: 'left' }}>
                   {merkleRoot}
                 </span>
               </div>
@@ -220,34 +220,34 @@ pub fn submit_bite(
               </div>
 
               {/* ZK Execution Proof Logs Terminal */}
-              <div className="proposal-title" style={{ color: '#60a5fa', fontSize: '10px', fontWeight: 'bold', fontFamily: 'Orbitron', marginTop: '4px', textAlign: 'left' }}>
-                ZKPROOF CONSOLE LOGS
+              <div className="proposal-title" style={{ color: '#10b981', fontSize: '10px', fontWeight: 'bold', fontFamily: 'Orbitron', marginTop: '4px', textAlign: 'left' }}>
+                SOROBAN AUDIT LOGS
               </div>
               <div 
                 id="zkProofLogContainer" 
                 style={{ 
                   fontFamily: 'monospace', 
                   fontSize: '8.5px', 
-                  color: '#60a5fa', 
+                  color: '#a7f3d0', 
                   background: '#0c0603', 
                   padding: '8px', 
                   borderRadius: '8px', 
                   maxHeight: '80px', 
                   overflowY: 'auto', 
-                  border: '1px solid rgba(56, 189, 248, 0.2)', 
+                  border: '1px solid rgba(16, 185, 129, 0.2)', 
                   lineHeight: '1.4',
                   textAlign: 'left',
-                  boxShadow: 'inset 0 0 10px rgba(56, 189, 248, 0.1)'
+                  boxShadow: 'inset 0 0 10px rgba(16, 185, 129, 0.1)'
                 }}
               >
                 {zkLogs.length > 0 ? (
                   zkLogs.map((log, index) => (
-                    <div key={index} style={{ color: log.includes('error') ? '#f87171' : log.includes('success') || log.includes('validado') ? '#34d399' : '#60a5fa' }}>
+                    <div key={index} style={{ color: log.includes('error') ? '#f87171' : log.includes('success') || log.includes('exitoso') ? '#34d399' : '#a7f3d0' }}>
                       &gt; {log}
                     </div>
                   ))
                 ) : (
-                  <div style={{ color: '#64748b' }}>&gt; Esperando compilación de testigos...</div>
+                  <div style={{ color: '#64748b' }}>&gt; Esperando transacciones de Soroban...</div>
                 )}
               </div>
             </div>

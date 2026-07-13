@@ -5,11 +5,15 @@ export interface StellarSorobanConfig {
   horizonUrl: string;
   sorobanRpcUrl: string;
   contractId: string;
+  sponsorPublicKey?: string;
+  sponsorPrivateKey?: string; // Utilizado en desarrollo local
 }
 
 export const SorobanConfig: StellarSorobanConfig = {
   network: 'TESTNET',
   horizonUrl: 'https://horizon-testnet.stellar.org',
   sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
-  contractId: 'CC3Z4U7K6GZCSMBMRNRPP6O255PBL7OSBDSHBYS6N2D637T72X7T72X72'
+  contractId: 'CBLFGLVEWM7JFC5C3P4R2DIZB7VR7KNRYWHFGWLVAJSOF4PR3QGO5ZWS',
+  sponsorPublicKey: 'GA7W5P7B63Q3Z2WURGZ6D4H6E7O6Y6Q4D6E7O6Y6Q4D6E7O6Y6Q4D6E7', // Clave demo
+  sponsorPrivateKey: 'SA7W5P7B63Q3Z2WURGZ6D4H6E7O6Y6Q4D6E7O6Y6Q4D6E7O6Y6Q4D6E7' // Clave demo local
 };

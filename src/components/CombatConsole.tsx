@@ -16,6 +16,7 @@ interface CombatConsoleProps {
   matchmakingTime: number;
   turnTimer: number;
   onStartMatchmaking: (inviteHash?: string, invitePreimage?: string) => void;
+  onStartSinglePlayer: () => void;
   onCancelMatchmaking: () => void;
   onForfeit: () => void;
   onBackToLobby: () => void;
@@ -37,6 +38,7 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
   matchmakingTime,
   turnTimer,
   onStartMatchmaking,
+  onStartSinglePlayer,
   onCancelMatchmaking,
   onForfeit,
   onBackToLobby,
@@ -259,13 +261,22 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
                   Prepara tu mesa secreta arriba y presiona Iniciar para emparejarte con cualquier chef disponible en la red.
                 </p>
               </div>
-              <button 
-                className="console-btn" 
-                onClick={() => onStartMatchmaking()}
-                style={{ margin: 0, padding: '10px 24px', width: 'auto', fontFamily: 'Orbitron', fontWeight: 'bold' }}
-              >
-                BUSCAR RIVAL EN LÍNEA ⚡
-              </button>
+               <div style={{ display: 'flex', gap: '10px' }}>
+                <button 
+                  className="console-btn" 
+                  onClick={onStartSinglePlayer}
+                  style={{ margin: 0, padding: '10px 24px', width: 'auto', fontFamily: 'Orbitron', fontWeight: 'bold', background: 'rgba(232, 132, 90, 0.1)', border: '2px solid var(--neon-red)', color: 'var(--neon-red)' }}
+                >
+                  JUGAR VS CPU 🤖
+                </button>
+                <button 
+                  className="console-btn" 
+                  onClick={() => onStartMatchmaking()}
+                  style={{ margin: 0, padding: '10px 24px', width: 'auto', fontFamily: 'Orbitron', fontWeight: 'bold' }}
+                >
+                  BUSCAR RIVAL EN LÍNEA ⚡
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', flexWrap: 'wrap', gap: '15px', background: 'rgba(251, 191, 36, 0.02)', padding: '10px', borderRadius: '10px', border: '1px solid rgba(251, 191, 36, 0.1)' }}>
@@ -305,48 +316,6 @@ export const CombatConsole: React.FC<CombatConsoleProps> = ({
 
             </div>
           )}
-
-          {/* Fila de Depuración de WebSocket */}
-          <div className="ws-debug-row" style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', background: 'rgba(0,0,0,0.3)', padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
-            <span style={{ fontSize: '9px', fontFamily: 'Orbitron', color: isWSConnected ? '#10b981' : '#f43f5e', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: isWSConnected ? '#10b981' : '#f43f5e' }}></span>
-              {isWSConnected ? 'WS CONECTADO' : 'WS DESCONECTADO'}
-            </span>
-            <input 
-              type="text" 
-              value={wsUrl} 
-              onChange={(e) => onWsUrlChange(e.target.value)} 
-              placeholder="ws://localhost:8080/ws"
-              style={{ 
-                flex: 1, 
-                background: 'rgba(0,0,0,0.6)', 
-                border: '1px solid rgba(255,255,255,0.15)', 
-                color: '#fff', 
-                fontSize: '10px', 
-                padding: '5px 10px', 
-                borderRadius: '5px',
-                fontFamily: 'monospace',
-                outline: 'none'
-              }} 
-            />
-            {isWSConnected ? (
-              <button 
-                onClick={onDisconnectWS}
-                className="console-btn btn-secondary"
-                style={{ margin: 0, padding: '4px 12px', fontSize: '9px', width: 'auto', height: '26px' }}
-              >
-                DESCONECTAR
-              </button>
-            ) : (
-              <button 
-                onClick={onConnectWS}
-                className="console-btn"
-                style={{ margin: 0, padding: '4px 12px', fontSize: '9px', width: 'auto', height: '26px', background: 'var(--neon-gold)', borderColor: 'var(--neon-gold)', color: '#000', fontWeight: 'bold' }}
-              >
-                CONECTAR
-              </button>
-            )}
-          </div>
         </div>
       )}
     </div>

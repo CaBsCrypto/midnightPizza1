@@ -1,40 +1,75 @@
-import { useState, useCallback } from 'react';
-import { StellarPasskeysMock } from '../stellar_passkeys';
-import { isConnected as getFreighterStatus, getAddress as getFreighterAddress, requestAccess as requestFreighterAccess } from '@stellar/freighter-api';
+import { useState, useCallback, useEffect } from 'react';
 import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit/sdk';
-import { Networks } from '@creit.tech/stellar-wallets-kit/types';
+import { Networks, SwkAppDarkTheme } from '@creit.tech/stellar-wallets-kit/types';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
-import { Keypair } from '@stellar/stellar-sdk';
+import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
+import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
+import { HanaModule } from '@creit.tech/stellar-wallets-kit/modules/hana';
+import { LedgerModule } from '@creit.tech/stellar-wallets-kit/modules/ledger';
+import { TransactionBuilder, Networks as SdkNetworks } from '@stellar/stellar-sdk';
+import { usePrivy, useLoginWithPasskey, useSignupWithPasskey } from '@privy-io/react-auth';
+import { useCreateWallet, useSignRawHash } from '@privy-io/react-auth/extended-chains';
 
 // Inicializar el kit estático con los módulos correspondientes para la Stellar Testnet
-StellarWalletsKit.init({
-  network: Networks.TESTNET,
-  modules: [
-    new FreighterModule(),
-    new AlbedoModule()
-  ]
-});
+let _kitInitialized = false;
+try {
+  StellarWalletsKit.init({
+    network: Networks.TESTNET,
+    theme: SwkAppDarkTheme,
+    modules: [
+      new FreighterModule(),
+      new AlbedoModule(),
+      new xBullModule(),
+      new LobstrModule(),
+      new HanaModule(),
+      new LedgerModule()
+    ]
+  });
+  _kitInitialized = true;
+} catch (e) {
+  console.warn('[StellarWalletsKit] Error al inicializar el kit (modo degradado):', e);
+}
 
-export type StellarProviderType = 'passkey' | 'freighter' | 'albedo' | 'google';
+export type StellarProviderType = 'passkey' | 'freighter' | 'albedo' | 'xbull' | 'lobstr' | 'hana' | 'ledger' | 'google' | 'kit';
 
-// Generar un Keypair determinista basado en credenciales de usuario para simular wallets MPC e Inteligentes
-export function deriveStellarKeypair(seedText: string): Keypair {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(seedText + "_ClashOfPizzasSecretSalt2026");
-  const seed = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) {
-    seed[i] = data[i % data.length] ^ i;
-  }
-  return Keypair.fromRawEd25519Seed(seed as any);
+// Wallets gestionadas directamente por el usuario en su propio proveedor externo.
+// Para 'google' y 'passkey' usamos el embedded wallet de Stellar de Privy: la clave
+// privada vive dentro del enclave seguro de Privy y nunca llega al navegador de la app.
+const EXTERNAL_KIT_WALLETS = new Set(['freighter', 'albedo', 'xbull', 'lobstr', 'hana', 'ledger']);
+
+function getWalletCookie(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp('(^| )stellar_wallet=([^;]+)'));
+  return match ? match[2] : null;
+}
+
+function setWalletCookie(address: string) {
+  if (typeof window === 'undefined') return;
+  const isProd = window.location.hostname.endsWith('spicycrust.com');
+  const domain = isProd ? '; domain=.spicycrust.com' : '';
+  document.cookie = `stellar_wallet=${address}${domain}; path=/; max-age=86400; Secure; SameSite=Lax`;
+}
+
+function deleteWalletCookie() {
+  if (typeof window === 'undefined') return;
+  const isProd = window.location.hostname.endsWith('spicycrust.com');
+  const domain = isProd ? '; domain=.spicycrust.com' : '';
+  document.cookie = `stellar_wallet=; path=/; max-age=0${domain}; Secure; SameSite=Lax`;
 }
 
 export function useStellarWallet() {
   const [isConnected, setIsConnected] = useState(false);
   const [stellarAddress, setStellarAddress] = useState('');
   const [stellarBalance, setStellarBalance] = useState('0.00');
-  const [walletType, setWalletType] = useState<StellarProviderType | null>(null);
+  const [walletType, setWalletType] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const { login, ready, authenticated, user, logout } = usePrivy();
+  const { loginWithPasskey } = useLoginWithPasskey();
+  const { signupWithPasskey } = useSignupWithPasskey();
+  const { createWallet } = useCreateWallet();
+  const { signRawHash } = useSignRawHash();
 
   // Consultar balance real en XLM desde Horizon Testnet
   const fetchStellarBalance = useCallback(async (addr: string) => {
@@ -56,7 +91,7 @@ export function useStellarWallet() {
     }
   }, []);
 
-  // Activar y fondear cuenta determinista automáticamente con Friendbot en Testnet
+  // Activar y fondear cuenta automáticamente con Friendbot en Testnet
   const fundWithFriendbot = useCallback(async (addr: string) => {
     try {
       console.log(`Fondeando cuenta ${addr} en Testnet via Friendbot...`);
@@ -71,83 +106,88 @@ export function useStellarWallet() {
     }
   }, []);
 
-  const connectStellar = useCallback(async (type: StellarProviderType, username?: string) => {
-    setIsLoading(true);
-    try {
-      if (type === 'passkey') {
-        const usernameClean = username || 'Chef_Soroban';
-        // Simular flujo WebAuthn y derivar cuenta Stellar real determinista
-        await StellarPasskeysMock.register(usernameClean);
-        const kp = deriveStellarKeypair('passkey_' + usernameClean);
-        const address = kp.publicKey();
-        
-        await fundWithFriendbot(address);
-        await fetchStellarBalance(address);
+  // Cargar cookie al inicio
+  useEffect(() => {
+    const activeWalletAddress = getWalletCookie();
+    if (activeWalletAddress && !stellarAddress) {
+      setStellarAddress(activeWalletAddress);
+      setWalletType('google');
+      setIsConnected(true);
+      fetchStellarBalance(activeWalletAddress);
+      console.log("Sesión activa de Stellar detectada en cookie:", activeWalletAddress);
+    }
+  }, [fetchStellarBalance, stellarAddress]);
 
-        setStellarAddress(address);
-        setWalletType('passkey');
-        setIsConnected(true);
-        localStorage.setItem('clash_stellar_secret', kp.secret());
-        return true;
-      } else if (type === 'freighter') {
-        // Conexión real utilizando @stellar/freighter-api
-        const status = await getFreighterStatus();
-        const connected = typeof status === 'boolean' ? status : status?.isConnected;
-        
-        if (connected) {
-          const res = await getFreighterAddress();
-          if (res && res.address) {
-            await fetchStellarBalance(res.address);
-            setStellarAddress(res.address);
-            setWalletType('freighter');
-            setIsConnected(true);
-            return true;
-          } else {
-            // Intentar solicitar acceso si no está aprobado aún
-            const access = await requestFreighterAccess();
-            if (access && access.address) {
-              await fetchStellarBalance(access.address);
-              setStellarAddress(access.address);
-              setWalletType('freighter');
-              setIsConnected(true);
-              return true;
-            }
-          }
-        }
-        
-        // Fallback dinámico si no está instalada la extensión o no está conectada
-        console.warn('Freighter no detectado o no disponible en el navegador.');
-        alert('Extensión Freighter no detectada o inactiva. Por favor instálala o inicia sesión en ella.');
-        return false;
+  // Al autenticarse con Privy (Google o Passkey), obtener o crear el embedded wallet de Stellar.
+  // La clave privada nunca sale del enclave seguro de Privy; el cliente solo recibe la dirección pública.
+  useEffect(() => {
+    if (!ready || !authenticated || !user) return;
 
-      } else if (type === 'albedo') {
-        // Conexión real con Albedo usando Stellar Wallets Kit de forma estática
-        StellarWalletsKit.setWallet('albedo');
-        const { address } = await StellarWalletsKit.fetchAddress();
-        if (address) {
-          await fetchStellarBalance(address);
-          setStellarAddress(address);
-          setWalletType('albedo');
-          setIsConnected(true);
-          return true;
-        }
-      } else if (type === 'google') {
-        // Simular embedded wallet OAuth (Google / Privy)
-        const email = username || 'chef@gmail.com';
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        // Derivar llave Stellar real determinista para el correo
-        const kp = deriveStellarKeypair('google_' + email);
-        const address = kp.publicKey();
-        
+    const setupStellarWallet = async () => {
+      setIsLoading(true);
+      try {
+        const existing = user.linkedAccounts.find(
+          (a: any) => a.type === 'wallet' && a.chainType === 'stellar'
+        ) as any;
+
+        const address = existing?.address || (await createWallet({ chainType: 'stellar' })).wallet.address;
+
         await fundWithFriendbot(address);
         await fetchStellarBalance(address);
 
         setStellarAddress(address);
         setWalletType('google');
         setIsConnected(true);
-        localStorage.setItem('clash_stellar_secret', kp.secret());
+        setWalletCookie(address);
+        console.log("Embedded wallet de Stellar (Privy) lista para:", address);
+      } catch (e) {
+        console.error("Error obteniendo el embedded wallet de Stellar desde Privy", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    setupStellarWallet();
+  }, [ready, authenticated, user, createWallet, fundWithFriendbot, fetchStellarBalance]);
+
+  const connectStellar = useCallback(async (type: StellarProviderType, username?: string) => {
+    setIsLoading(true);
+    try {
+      if (type === 'passkey') {
+        // Passkey real (WebAuthn) a través de Privy; sin derivación de claves en el cliente.
+        try {
+          await loginWithPasskey();
+        } catch {
+          await signupWithPasskey();
+        }
         return true;
+      } else if (type === 'google') {
+        // Lanzar el login modal real de Privy
+        if (ready) {
+          login();
+          return true;
+        }
+      } else if (type === 'kit') {
+        // Abrir el modal oficial de selección de Stellar Wallets Kit
+        const { address } = await StellarWalletsKit.authModal();
+        if (address) {
+          await fetchStellarBalance(address);
+          setStellarAddress(address);
+          const activeModule = StellarWalletsKit.selectedModule;
+          setWalletType(activeModule?.productId || 'kit');
+          setIsConnected(true);
+          return true;
+        }
+      } else {
+        // Conectar una wallet del kit directamente
+        StellarWalletsKit.setWallet(type);
+        const { address } = await StellarWalletsKit.getAddress();
+        if (address) {
+          await fetchStellarBalance(address);
+          setStellarAddress(address);
+          setWalletType(type);
+          setIsConnected(true);
+          return true;
+        }
       }
       return false;
     } catch (err) {
@@ -157,15 +197,42 @@ export function useStellarWallet() {
     } finally {
       setIsLoading(false);
     }
-  }, [fetchStellarBalance, fundWithFriendbot]);
+  }, [fetchStellarBalance, ready, login, loginWithPasskey, signupWithPasskey]);
 
   const disconnectStellar = useCallback(() => {
     setStellarAddress('');
     setStellarBalance('0.00');
     setWalletType(null);
     setIsConnected(false);
-    localStorage.removeItem('clash_stellar_secret');
-  }, []);
+    deleteWalletCookie();
+    if (authenticated) {
+      logout();
+    }
+  }, [authenticated, logout]);
+
+  // Firma una transacción Stellar sin exponer ninguna clave privada al código de la app:
+  // - Wallets externas (Freighter/Albedo/etc.) firman en su propia extensión/dispositivo.
+  // - Embedded wallet de Privy (Google/Passkey) firma vía enclave seguro, devolviendo solo la firma.
+  const signStellarTransaction = useCallback(async (txXdr: string): Promise<string> => {
+    if (walletType && EXTERNAL_KIT_WALLETS.has(walletType)) {
+      const res = await StellarWalletsKit.signTransaction(txXdr, {
+        address: stellarAddress,
+        networkPassphrase: Networks.TESTNET
+      });
+      return res.signedTxXdr;
+    }
+
+    const tx = TransactionBuilder.fromXDR(txXdr, SdkNetworks.TESTNET) as any;
+    const hash = tx.hash() as Buffer;
+    const { signature } = await signRawHash({
+      address: stellarAddress,
+      chainType: 'stellar',
+      hash: (`0x${hash.toString('hex')}`) as `0x${string}`
+    });
+    const signatureBase64 = Buffer.from(signature.slice(2), 'hex').toString('base64');
+    tx.addSignature(stellarAddress, signatureBase64);
+    return tx.toXDR();
+  }, [walletType, stellarAddress, signRawHash]);
 
   return {
     isConnected,
@@ -174,7 +241,7 @@ export function useStellarWallet() {
     walletType,
     isLoading,
     connectStellar,
-    disconnectStellar
+    disconnectStellar,
+    signStellarTransaction
   };
 }
-

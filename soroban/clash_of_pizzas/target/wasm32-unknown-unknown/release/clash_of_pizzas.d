@@ -1,0 +1,1 @@
+C:\Users\MGC\Documents\antigravity\bold-hawking\soroban\clash_of_pizzas\target\wasm32-unknown-unknown\release\clash_of_pizzas.wasm: C:\Users\MGC\Documents\antigravity\bold-hawking\soroban\clash_of_pizzas\src\lib.rs

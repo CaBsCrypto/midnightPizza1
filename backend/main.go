@@ -39,6 +39,18 @@ type MatchFoundPayload struct {
 	Role             string `json:"role"` // "player_1" o "player_2"
 	OpponentID       string `json:"opponentId"`
 	OpponentUsername string `json:"opponentUsername"`
+	PlayerTurn       bool   `json:"playerTurn"`
+}
+
+// SubmitBoardPayload contiene el tablero 6x6 secreto que cada jugador entrega al servidor autoritativo
+type SubmitBoardPayload struct {
+	Board [][]int `json:"board"`
+}
+
+// BitePayload contiene la celda mordida (r, c) enviada por el atacante
+type BitePayload struct {
+	R int `json:"r"`
+	C int `json:"c"`
 }
 
 // PlaceCommitmentPayload contiene el tablero o el compromiso criptográfico de los barcos
@@ -103,40 +115,130 @@ type Client struct {
 	mu             sync.Mutex
 }
 
-// Room representa una sala de juego activa con dos jugadores
+// PlayerState mantiene el estado de juego autoritativo de un jugador en el servidor.
+// El tablero nunca se envía al oponente; solo se revela el valor de cada celda mordida.
+type PlayerState struct {
+	board    [6][6]int
+	boardSet bool
+	hp       int
+	score    int
+	immunity bool             // absorbe la próxima trampa de chile
+	bitten   [6][6]bool       // celdas que ESTE jugador ya mordió del tablero rival
+}
+
+// Room representa una sala de juego activa con dos jugadores y su estado autoritativo.
 type Room struct {
 	ID      string
 	Player1 *Client
 	Player2 *Client
+	P1State *PlayerState
+	P2State *PlayerState
+	turnP1  bool // true = turno del Player1
+	started bool // true cuando ambos tableros fueron entregados
+	over    bool // true cuando la partida terminó
 	mu      sync.Mutex
+}
+
+// defaultRival genera un descriptor de chef rival para el cliente (identidad visual).
+func defaultRival(username string) map[string]interface{} {
+	name := username
+	if name == "" {
+		name = "Cyber Pizzaiolo"
+	}
+	return map[string]interface{}{
+		"name":       name,
+		"emoji":      "🧑‍🍳",
+		"title":      "Rival Soroban",
+		"aggression": 4,
+	}
+}
+
+// boolToPlayer traduce "¿gané?" a la etiqueta que espera el frontend.
+func boolToPlayer(won bool) string {
+	if won {
+		return "player"
+	}
+	return "rival"
+}
+
+// applyBite aplica el resultado de morder una celda del tablero del defensor.
+// Reglas v1 (autoritativas, ajustables en fase de diseño):
+//   0        celda vacía (agua): fallo, sin efecto
+//   1-4      rebanada de pizza: el defensor pierde 1 HP, el atacante suma +100 pts
+//   5        jalapeño (trampa): el atacante pierde 1 HP (o consume inmunidad)
+//   6        habanero (trampa): el atacante pierde 2 HP (o consume inmunidad)
+//   7        agua (cura): el atacante recupera +1 HP (máx 5)
+//   8        leche (cura): el atacante recupera +2 HP (máx 5)
+//   9        trufa de oro: el atacante suma +500 pts y gana inmunidad
+func applyBite(attacker, defender *PlayerState, val int) {
+	switch {
+	case val >= 1 && val <= 4:
+		defender.hp -= 1
+		attacker.score += 100
+	case val == 5:
+		if attacker.immunity {
+			attacker.immunity = false
+		} else {
+			attacker.hp -= 1
+		}
+	case val == 6:
+		if attacker.immunity {
+			attacker.immunity = false
+		} else {
+			attacker.hp -= 2
+		}
+	case val == 7:
+		attacker.hp += 1
+	case val == 8:
+		attacker.hp += 2
+	case val == 9:
+		attacker.score += 500
+		attacker.immunity = true
+	}
+	if attacker.hp > 5 {
+		attacker.hp = 5
+	}
+	if attacker.hp < 0 {
+		attacker.hp = 0
+	}
+	if defender.hp < 0 {
+		defender.hp = 0
+	}
 }
 
 // Server administra el ciclo de vida del juego, los clientes y las salas
 type Server struct {
-	rooms         map[string]*Room
-	roomsMu       sync.RWMutex
-	pending       []*Client
-	pendingMu     sync.Mutex
-	inviteLobbies map[string]*Client // Mapa hash -> Host Client
-	inviteMu      sync.Mutex
-	clients       map[*Client]bool
-	clientsMu     sync.Mutex
-	register      chan *Client
-	unregister    chan *Client
+	rooms              map[string]*Room
+	roomsMu            sync.RWMutex
+	roomsByPlayer      map[string]*Room // PlayerID -> Room active/paused
+	roomsByPlayerMu    sync.RWMutex
+	graceDisconnections map[string]*time.Timer // RoomID -> Timer de gracia
+	graceMu            sync.Mutex
+	pending            []*Client
+	pendingMu          sync.Mutex
+	inviteLobbies      map[string]*Client // Mapa hash -> Host Client
+	inviteMu           sync.Mutex
+	clients            map[*Client]bool
+	clientsMu          sync.Mutex
+	register           chan *Client
+	unregister         chan *Client
 }
 
 func NewServer() *Server {
 	s := &Server{
-		rooms:         make(map[string]*Room),
-		inviteLobbies: make(map[string]*Client),
-		clients:       make(map[*Client]bool),
-		register:      make(chan *Client),
-		unregister:    make(chan *Client),
+		rooms:               make(map[string]*Room),
+		roomsByPlayer:       make(map[string]*Room),
+		graceDisconnections: make(map[string]*time.Timer),
+		inviteLobbies:       make(map[string]*Client),
+		clients:             make(map[*Client]bool),
+		register:            make(chan *Client),
+		unregister:          make(chan *Client),
 	}
 	go s.run()
 	s.startHeartbeatTicker()
 	return s
 }
+
 
 // run maneja el registro y la desconexión de clientes a nivel global
 func (s *Server) run() {
@@ -189,6 +291,61 @@ func (s *Server) startHeartbeatTicker() {
 
 // addToLobby agrega un jugador a la cola del Matchmaker o lo asocia vía ZK Preimage
 func (s *Server) addToLobby(client *Client) {
+	// Interceptar reconexión si el jugador ya pertenecía a una sala pausada/activa
+	s.roomsByPlayerMu.RLock()
+	existingRoom, hasRoom := s.roomsByPlayer[client.playerID]
+	s.roomsByPlayerMu.RUnlock()
+
+	if hasRoom && existingRoom != nil {
+		existingRoom.mu.Lock()
+		// Cancelar temporizador de desconexión por gracia
+		s.graceMu.Lock()
+		if timer, exists := s.graceDisconnections[existingRoom.ID]; exists {
+			timer.Stop()
+			delete(s.graceDisconnections, existingRoom.ID)
+			log.Printf("Temporizador de gracia cancelado para sala %s (Jugador reconectado: %s)", existingRoom.ID, client.username)
+		}
+		s.graceMu.Unlock()
+
+		var role string
+		var opponent *Client
+		if existingRoom.Player1.playerID == client.playerID {
+			existingRoom.Player1 = client
+			role = "player_1"
+			opponent = existingRoom.Player2
+		} else {
+			existingRoom.Player2 = client
+			role = "player_2"
+			opponent = existingRoom.Player1
+		}
+		client.room = existingRoom
+		existingRoom.mu.Unlock()
+
+		log.Printf("Jugador %s se reconectó exitosamente a sala %s", client.username, existingRoom.ID)
+
+		// Notificar al jugador reconectado (restaurando de quién es el turno)
+		reconnectTurn := existingRoom.turnP1
+		if role == "player_2" {
+			reconnectTurn = !existingRoom.turnP1
+		}
+		reconnectPayload := MatchFoundPayload{
+			RoomID:           existingRoom.ID,
+			Role:             role,
+			OpponentID:       opponent.playerID,
+			OpponentUsername: opponent.username,
+			PlayerTurn:       reconnectTurn,
+		}
+		reconnectMsg, _ := json.Marshal(Event{Type: "match_found", Payload: mustMarshal(reconnectPayload)})
+		client.sendBytes(reconnectMsg)
+
+		// Notificar al oponente
+		if opponent != nil {
+			opponentMsg, _ := json.Marshal(Event{Type: "opponent_reconnected", Payload: mustMarshal(LobbyErrorPayload{Message: fmt.Sprintf("El oponente %s ha regresado a la arena.", client.username)})})
+			opponent.sendBytes(opponentMsg)
+		}
+		return
+	}
+
 	// 1. Caso Lobby Privado ZK Preimage (Unirse como Invitado)
 	if client.invitePreimage != "" {
 		s.inviteMu.Lock()
@@ -221,6 +378,7 @@ func (s *Server) addToLobby(client *Client) {
 
 	// 3. Matchmaker público tradicional
 	s.pendingMu.Lock()
+
 	defer s.pendingMu.Unlock()
 
 	// Evitar duplicados en la cola
@@ -278,20 +436,29 @@ func (s *Server) createRoom(p1, p2 *Client) {
 		ID:      roomID,
 		Player1: p1,
 		Player2: p2,
+		P1State: &PlayerState{hp: 5},
+		P2State: &PlayerState{hp: 5},
+		turnP1:  true,
 	}
 
 	s.rooms[roomID] = room
 	p1.room = room
 	p2.room = room
 
+	s.roomsByPlayerMu.Lock()
+	s.roomsByPlayer[p1.playerID] = room
+	s.roomsByPlayer[p2.playerID] = room
+	s.roomsByPlayerMu.Unlock()
+
 	log.Printf("Partida emparejada: Sala %s creada con %s y %s", roomID, p1.username, p2.username)
 
-	// Notificar a Player 1
+	// Notificar a Player 1 (comienza moviendo)
 	p1Payload := MatchFoundPayload{
 		RoomID:           roomID,
 		Role:             "player_1",
 		OpponentID:       p2.playerID,
 		OpponentUsername: p2.username,
+		PlayerTurn:       true,
 	}
 	p1Msg, _ := json.Marshal(Event{Type: "match_found", Payload: mustMarshal(p1Payload)})
 	p1.sendBytes(p1Msg)
@@ -302,9 +469,11 @@ func (s *Server) createRoom(p1, p2 *Client) {
 		Role:             "player_2",
 		OpponentID:       p1.playerID,
 		OpponentUsername: p1.username,
+		PlayerTurn:       false,
 	}
 	p2Msg, _ := json.Marshal(Event{Type: "match_found", Payload: mustMarshal(p2Payload)})
 	p2.sendBytes(p2Msg)
+
 }
 
 // handleDisconnect gestiona el abandono o desconexión del juego
@@ -325,20 +494,62 @@ func (s *Server) handleDisconnect(client *Client) {
 	}
 
 	if opponent != nil {
-		disconnectPayload := OpponentDisconnectedPayload{
-			RoomID:   room.ID,
-			PlayerID: client.playerID,
-		}
-		msg, _ := json.Marshal(Event{Type: "opponent_disconnected", Payload: mustMarshal(disconnectPayload)})
+		// Notificar desconexión temporal
+		disconnectPayload := LobbyErrorPayload{Message: fmt.Sprintf("El oponente %s se ha desconectado temporalmente. Esperando reconexión (15s)...", client.username)}
+		msg, _ := json.Marshal(Event{Type: "opponent_disconnected_temporary", Payload: mustMarshal(disconnectPayload)})
 		opponent.sendBytes(msg)
-		opponent.room = nil
-	}
 
-	s.roomsMu.Lock()
-	delete(s.rooms, room.ID)
-	s.roomsMu.Unlock()
-	log.Printf("Sala %s destruida debido a desconexión.", room.ID)
+		// Configurar timer de gracia de 15 segundos
+		s.graceMu.Lock()
+		if timer, exists := s.graceDisconnections[room.ID]; exists {
+			timer.Stop()
+		}
+		
+		s.graceDisconnections[room.ID] = time.AfterFunc(15*time.Second, func() {
+			s.graceMu.Lock()
+			delete(s.graceDisconnections, room.ID)
+			s.graceMu.Unlock()
+
+			room.mu.Lock()
+			var currentOpponent *Client
+			if room.Player1 == client {
+				currentOpponent = room.Player2
+			} else {
+				currentOpponent = room.Player1
+			}
+			room.mu.Unlock()
+
+			if currentOpponent != nil {
+				finalMsg, _ := json.Marshal(Event{Type: "opponent_disconnected", Payload: mustMarshal(OpponentDisconnectedPayload{RoomID: room.ID, PlayerID: client.playerID})})
+				currentOpponent.sendBytes(finalMsg)
+				currentOpponent.room = nil
+			}
+
+			s.roomsMu.Lock()
+			delete(s.rooms, room.ID)
+			s.roomsMu.Unlock()
+
+			s.roomsByPlayerMu.Lock()
+			delete(s.roomsByPlayer, room.Player1.playerID)
+			delete(s.roomsByPlayer, room.Player2.playerID)
+			s.roomsByPlayerMu.Unlock()
+
+			log.Printf("Sala %s eliminada de forma definitiva por tiempo de gracia expirado.", room.ID)
+		})
+		s.graceMu.Unlock()
+	} else {
+		// Si ya no queda oponente, limpiar de inmediato
+		s.roomsMu.Lock()
+		delete(s.rooms, room.ID)
+		s.roomsMu.Unlock()
+
+		s.roomsByPlayerMu.Lock()
+		delete(s.roomsByPlayer, room.Player1.playerID)
+		delete(s.roomsByPlayer, room.Player2.playerID)
+		s.roomsByPlayerMu.Unlock()
+	}
 }
+
 
 func mustMarshal(v interface{}) json.RawMessage {
 	b, _ := json.Marshal(v)
@@ -464,56 +675,206 @@ func (c *Client) handleEvent(server *Server, ev Event) {
 		c.invitePreimage = p.InvitePreimage
 		server.addToLobby(c)
 
-	case "place_commitment":
-		if c.room == nil {
-			return
-		}
-		c.room.mu.Lock()
-		opponent := c.getOpponent()
-		c.room.mu.Unlock()
+	case "submit_board":
+		c.handleSubmitBoard(ev)
 
-		if opponent != nil {
-			opponent.sendBytes(mustMarshalEvent("place_commitment", ev.Payload))
-		}
+	case "bite":
+		c.handleBite(ev)
 
-	case "fire_bite":
-		if c.room == nil {
-			return
-		}
-		c.room.mu.Lock()
-		opponent := c.getOpponent()
-		c.room.mu.Unlock()
+	case "cancel_matchmaking":
+		server.removeFromLobby(c)
 
-		if opponent != nil {
-			opponent.sendBytes(mustMarshalEvent("fire_bite", ev.Payload))
-		}
-
-	case "bite_result":
-		if c.room == nil {
-			return
-		}
-		c.room.mu.Lock()
-		opponent := c.getOpponent()
-		c.room.mu.Unlock()
-
-		if opponent != nil {
-			opponent.sendBytes(mustMarshalEvent("bite_result", ev.Payload))
-		}
+	case "forfeit":
+		c.handleForfeit()
 
 	case "reveal_board_event":
+		// Relay legado para la fase de revelado ZK final (aún no autoritativo).
 		if c.room == nil {
 			return
 		}
 		c.room.mu.Lock()
 		opponent := c.getOpponent()
 		c.room.mu.Unlock()
-
 		if opponent != nil {
 			opponent.sendBytes(mustMarshalEvent("reveal_board_event", ev.Payload))
 		}
 
 	default:
 		log.Printf("Evento no reconocido: %s", ev.Type)
+	}
+}
+
+// handleSubmitBoard almacena el tablero secreto del jugador. Cuando ambos
+// tableros están presentes, inicia la partida notificando a ambos clientes.
+func (c *Client) handleSubmitBoard(ev Event) {
+	if c.room == nil {
+		return
+	}
+	room := c.room
+	room.mu.Lock()
+	defer room.mu.Unlock()
+
+	if room.started {
+		// No se permite cambiar el tablero una vez iniciada la partida.
+		return
+	}
+
+	var p SubmitBoardPayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		log.Printf("submit_board inválido: %v", err)
+		return
+	}
+	if len(p.Board) != 6 {
+		return
+	}
+
+	var st *PlayerState
+	if room.Player1 == c {
+		st = room.P1State
+	} else if room.Player2 == c {
+		st = room.P2State
+	} else {
+		return
+	}
+	if st == nil {
+		return
+	}
+
+	for i := 0; i < 6; i++ {
+		if len(p.Board[i]) != 6 {
+			return
+		}
+		for j := 0; j < 6; j++ {
+			st.board[i][j] = p.Board[i][j]
+		}
+	}
+	st.boardSet = true
+	log.Printf("Tablero recibido de %s en sala %s", c.username, room.ID)
+
+	// Iniciar cuando ambos tableros estén listos.
+	if room.P1State.boardSet && room.P2State.boardSet && !room.started {
+		room.started = true
+		room.turnP1 = true
+		room.Player1.sendBytes(mustMarshalEvent("match_start", mustMarshal(map[string]interface{}{
+			"playerTurn": true,
+			"rivalChef":  defaultRival(room.Player2.username),
+		})))
+		room.Player2.sendBytes(mustMarshalEvent("match_start", mustMarshal(map[string]interface{}{
+			"playerTurn": false,
+			"rivalChef":  defaultRival(room.Player1.username),
+		})))
+		log.Printf("Partida iniciada en sala %s (ambos tableros comprometidos)", room.ID)
+	}
+}
+
+// handleBite procesa un mordisco de forma autoritativa: valida turno y celda,
+// aplica reglas de combate, avanza el turno y notifica el resultado a ambos.
+func (c *Client) handleBite(ev Event) {
+	if c.room == nil {
+		return
+	}
+	room := c.room
+	room.mu.Lock()
+	defer room.mu.Unlock()
+
+	if !room.started || room.over {
+		c.sendBytes(mustMarshalEvent("error", mustMarshal(LobbyErrorPayload{Message: "La partida no está activa."})))
+		return
+	}
+
+	isP1 := room.Player1 == c
+	if (isP1 && !room.turnP1) || (!isP1 && room.turnP1) {
+		c.sendBytes(mustMarshalEvent("error", mustMarshal(LobbyErrorPayload{Message: "No es tu turno."})))
+		return
+	}
+
+	var p BitePayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		return
+	}
+	if p.R < 0 || p.R > 5 || p.C < 0 || p.C > 5 {
+		c.sendBytes(mustMarshalEvent("error", mustMarshal(LobbyErrorPayload{Message: "Celda fuera de rango."})))
+		return
+	}
+
+	var attacker, defender *PlayerState
+	var defenderClient *Client
+	if isP1 {
+		attacker, defender, defenderClient = room.P1State, room.P2State, room.Player2
+	} else {
+		attacker, defender, defenderClient = room.P2State, room.P1State, room.Player1
+	}
+
+	if attacker.bitten[p.R][p.C] {
+		c.sendBytes(mustMarshalEvent("error", mustMarshal(LobbyErrorPayload{Message: "Ya mordiste esa casilla."})))
+		return
+	}
+	attacker.bitten[p.R][p.C] = true
+
+	val := defender.board[p.R][p.C]
+	applyBite(attacker, defender, val)
+
+	// El turno siempre pasa al oponente tras un mordisco.
+	room.turnP1 = !room.turnP1
+
+	// Evaluar fin de partida.
+	over := false
+	attackerWon := false
+	if attacker.hp <= 0 {
+		over, attackerWon = true, false
+	} else if defender.hp <= 0 {
+		over, attackerWon = true, true
+	}
+	if over {
+		room.over = true
+	}
+
+	attackerTurn := (isP1 && room.turnP1) || (!isP1 && !room.turnP1)
+
+	// Resultado para el atacante (su vista del tablero rival).
+	c.sendBytes(mustMarshalEvent("bite_result", mustMarshal(map[string]interface{}{
+		"r": p.R, "c": p.C, "val": val,
+		"playerHP": attacker.hp, "playerScore": attacker.score,
+		"rivalHP": defender.hp, "rivalScore": defender.score,
+		"playerTurn": attackerTurn,
+	})))
+
+	// Notificación para el defensor (su tablero fue mordido).
+	// sendBytes solo toma el mutex del cliente (no el de la sala), por lo que
+	// es seguro emitir mientras se mantiene room.mu.
+	if defenderClient != nil {
+		defenderClient.sendBytes(mustMarshalEvent("rival_bite", mustMarshal(map[string]interface{}{
+			"r": p.R, "c": p.C, "val": val,
+			"playerHP": defender.hp, "playerScore": defender.score,
+			"rivalHP": attacker.hp, "rivalScore": attacker.score,
+			"playerTurn": !attackerTurn,
+		})))
+	}
+
+	if over {
+		c.sendBytes(mustMarshalEvent("game_over", mustMarshal(map[string]interface{}{"winner": boolToPlayer(attackerWon)})))
+		if defenderClient != nil {
+			defenderClient.sendBytes(mustMarshalEvent("game_over", mustMarshal(map[string]interface{}{"winner": boolToPlayer(!attackerWon)})))
+		}
+	}
+}
+
+// handleForfeit marca la partida como terminada y otorga la victoria al oponente.
+func (c *Client) handleForfeit() {
+	if c.room == nil {
+		return
+	}
+	room := c.room
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	if room.over {
+		return
+	}
+	room.over = true
+	opponent := c.getOpponent()
+	c.sendBytes(mustMarshalEvent("game_over", mustMarshal(map[string]interface{}{"winner": boolToPlayer(false)})))
+	if opponent != nil {
+		opponent.sendBytes(mustMarshalEvent("game_over", mustMarshal(map[string]interface{}{"winner": boolToPlayer(true)})))
 	}
 }
 

@@ -1,25 +1,36 @@
 /* ==========================================================================
-   🍕 CLASH OF PIZZAS: SPICY CHALLENGE - CYBERPUNK ESPORTS STYLING (GLASSMORPHISM)
+   CLASH OF PIZZAS: SPICY CHALLENGE - CYBERPUNK ESPORTS STYLING (GLASSMORPHISM)
    ========================================================================== */
 
+/* PizzaVerse shared theme — Layer 1 (base) + Layer 2 (PizzaDAO 2026 season) */
+/* PizzaVerse shared theme — variables defined below */
+
 :root {
-  /* Cyberpunk Neon Color System */
-  --bg-darkest: #030712;
-  --bg-darker: #0b0f19;
-  --panel-bg: rgba(17, 24, 39, 0.6);
-  --panel-border: rgba(255, 255, 255, 0.07);
+  /* Layer 3: Spicy Challenge per-game accent */
+  --pv-game-accent:      #7B2D8B;
+  --pv-game-accent-glow: rgba(123, 45, 139, 0.4);
+  --pv-game-accent-dark: #3b0764;
+
+  /* Dark Tavern Color System */
+  --bg-darkest: #0f0b08; /* Deep Charcoal Wood */
+  --bg-darker: #1a1410;  /* Dark Mahogany */
+  --panel-bg: rgba(28, 22, 16, 0.92);
+  --panel-border: rgba(195, 122, 103, 0.2);
   
-  /* Neon Accents */
-  --neon-red: #ff453a;
-  --neon-orange: #ff9f0a;
-  --neon-gold: #fbbf24;
-  --neon-green: #30d158;
-  --neon-blue: #0a84ff;
-  --neon-purple: #bf5af2;
+  /* Terracotta & Ember Accents */
+  --neon-red: #e8845a; /* Warm Terracotta */
+  --neon-orange: #f4a261; /* Amber Flame */
+  --neon-gold: #e8845a;
+  --neon-green: #8fbc6a; /* Fresh Basil */
+  --neon-blue: #6ea8c9; /* Cool Steel */
+  --neon-purple: #c37a67;
+  --glass-gradient: linear-gradient(135deg, rgba(28, 22, 16, 0.85) 0%, rgba(20, 15, 10, 0.7) 100%);
+  --neon-glow-gold: 0 4px 15px rgba(232, 132, 90, 0.2);
+  --text-dark: #e8ddd0; /* Warm Parchment */
   
   /* Fonts */
   --font-outfit: 'Outfit', sans-serif;
-  --font-orbitron: 'Orbitron', sans-serif;
+  --font-orbitron: 'Outfit', sans-serif;
 }
 
 /* Reset basics */
@@ -34,12 +45,12 @@
 body {
   background-color: var(--bg-darkest);
   background-image: 
-    radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 80%),
-    linear-gradient(to right, rgba(99, 102, 241, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(99, 102, 241, 0.05) 1px, transparent 1px);
+    radial-gradient(circle at 50% 50%, rgba(232, 132, 90, 0.06) 0%, transparent 80%),
+    linear-gradient(to right, rgba(232, 132, 90, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(232, 132, 90, 0.04) 1px, transparent 1px);
   background-size: 100% 100%, 40px 40px, 40px 40px;
   background-position: center;
-  color: #f3f4f6;
+  color: var(--text-dark);
   font-family: var(--font-outfit);
   overflow: hidden;
   width: 100vw;
@@ -55,7 +66,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: radial-gradient(circle at center, rgba(17, 24, 39, 0.45) 0%, var(--bg-darkest) 80%), 
+  background: radial-gradient(circle at center, rgba(17, 24, 39, 0.4) 0%, rgba(10, 8, 5, 0.92) 75%), 
               url('/cyberpunk_pizzeria_arena.png') no-repeat center center;
   background-size: cover;
   z-index: 999;
@@ -181,21 +192,22 @@ body {
 .top-hud {
   height: 80px;
   background: var(--panel-bg);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--panel-border);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  box-shadow: 0 10px 40px 0 rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.05);
   border-radius: 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 0 24px;
   flex-shrink: 0;
-  transition: border-color 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .top-hud:hover {
-  border-color: rgba(251, 191, 36, 0.2);
+  border-color: rgba(255, 204, 0, 0.3);
+  box-shadow: 0 10px 45px 0 rgba(0, 0, 0, 0.6), 0 0 15px rgba(255, 204, 0, 0.1), inset 0 1px 1px rgba(255, 255, 255, 0.08);
 }
 
 .hud-brand {

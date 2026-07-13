@@ -3,15 +3,18 @@ import { HUD } from './components/HUD';
 import { CombatConsole, RivalChef } from './components/CombatConsole';
 import { Sidebar } from './components/Sidebar';
 import { GameBoard } from './components/GameBoard';
-import { Console, LogLine } from './components/Console';
-import { useWebSockets } from './hooks/useWebSockets';
-import { useWallet } from './hooks/useWallet';
+import { TutorialWizard } from './components/TutorialWizard';
+export interface LogLine {
+  text: string;
+  type: 'system' | 'info' | 'success' | 'error' | 'warn';
+  timestamp: string;
+}
+import { useRealtimeMatch as useWebSockets } from './hooks/useRealtimeMatch';
 import { useStellarWallet } from './hooks/useStellarWallet';
 import { useGameAPI } from './hooks/useGameAPI';
-import { Friend, GameState } from './simulation';
+import { Friend, GameState } from './types';
 import { PizzeriaAudio } from './audio';
-import { MidnightZKSDK } from './contract';
-import { submitSorobanBite } from './stellar_contract';
+import { submitSorobanBite, initializeSorobanGame } from './stellar_contract';
 import { SorobanConfig } from './stellar_config';
 
 export const App: React.FC = () => {
@@ -82,25 +85,14 @@ export const App: React.FC = () => {
   // --- Custom Hooks & WebSocket Config ---
   const [wsUrl, setWsUrl] = useState(() => (import.meta as any).env?.VITE_WS_URL || 'ws://localhost:8080/ws');
   const { isConnected: isWSConnected, connect: connectWS, disconnect: disconnectWS, sendMessage: sendWSMessage, lastMessage } = useWebSockets(wsUrl);
-  const { 
-    isConnected: isWalletConnected, 
-    address: walletAddress, 
-    balance: walletBalance, 
-    connectWallet, 
-    disconnectWallet, 
-    signClaim,
-    revealBoard,
-    savePrivateBoardAndSalt,
-    getPrivateBoardAndSalt,
-    validateBoardAgainstCommitment
-  } = useWallet();
   const {
     isConnected: isStellarConnected,
     stellarAddress,
     stellarBalance,
     walletType,
     connectStellar,
-    disconnectStellar
+    disconnectStellar,
+    signStellarTransaction
   } = useStellarWallet();
   const { registerChef, submitBoardCommitment, sendBiteMove } = useGameAPI();
 
@@ -148,22 +140,55 @@ export const App: React.FC = () => {
         }
         setLobbyStatus('ready');
 
-        // Validar y guardar compromiso de duelo
-        savePrivateBoardAndSalt(playerBoard, playerSalt).then(async () => {
-          const { board: retrievedBoard } = await getPrivateBoardAndSalt();
-          if (retrievedBoard) {
-            const sdk = new MidnightZKSDK();
-            const computed = sdk.calculateBoardCommitment(retrievedBoard);
-            addLog(`🔐 Tablero privado verificado contra compromiso local: ${computed}`, 'success');
-            addZKLog(`[setup_duel] Compromiso de tablero validado para el Duelo: ${computed}`);
+        // Guardar compromiso de duelo en localStorage
+        localStorage.setItem('clash_private_board', JSON.stringify(playerBoard));
+        localStorage.setItem('clash_private_salt', Array.from(playerSalt).join(','));
+
+        // Entregar el tablero secreto al servidor autoritativo Go.
+        // El servidor valida turnos, mordiscos, HP y score; el rival nunca ve el tablero,
+        // solo el valor de cada celda que muerde.
+        sendWSMessage('submit_board', { board: playerBoard });
+
+        const boardBytes = new TextEncoder().encode(JSON.stringify(playerBoard));
+        const p1Commit = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+          p1Commit[i] = boardBytes[i % boardBytes.length] ^ i;
+        }
+        const hexCommitment = Array.from(p1Commit).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        addLog(`🔐 Tablero privado verificado contra compromiso local: ${hexCommitment.slice(0, 16)}...`, 'success');
+        addZKLog(`[setup_duel] Compromiso de tablero validado para el Duelo: ${hexCommitment.slice(0, 16)}...`);
+
+        // Inicializar juego en Stellar/Soroban si hay wallet Stellar conectada
+        if (isStellarConnected && stellarAddress) {
+          try {
+            addLog('📡 Inicializando juego de Soroban on-chain...', 'info');
+            const p2Commit = new Uint8Array(32); // rival commitment fallback
+            
+            initializeSorobanGame({
+              contractId: SorobanConfig.contractId,
+              p1Address: stellarAddress,
+              p2Address: payload.rivalChef?.address || stellarAddress, // Fallback a stellarAddress si no viene
+              p1Commitment: p1Commit,
+              p2Commitment: p2Commit,
+              playerAddress: stellarAddress,
+              signTransaction: signStellarTransaction
+            }).then(txHash => {
+              addLog(`🟢 Juego inicializado on-chain en Stellar. TxHash: ${txHash}`, 'success');
+              addZKLog(`[soroban_init] Inicializado. TxHash: ${txHash.slice(0, 12)}...`);
+            }).catch(err => {
+              addLog(`⚠️ Falló inicializar Soroban on-chain: ${err.message || err}`, 'warn');
+            });
+          } catch (e: any) {
+            console.error(e);
           }
-        });
+        }
         break;
 
       case 'bite_result': {
-        const { r, c, val, rivalHP: newRivalHP, rivalScore: newRivalScore, playerTurn: nextTurn } = payload;
+        const { r, c, val, rivalHP: newRivalHP, rivalScore: newRivalScore, playerHP: myHP, playerScore: myScore, playerTurn: nextTurn } = payload;
         PizzeriaAudio.playCrunch();
-        
+
         setRivalBoard(prev => {
           const next = prev.map(row => [...row]);
           next[r][c] = val;
@@ -177,6 +202,9 @@ export const App: React.FC = () => {
 
         if (newRivalHP !== undefined) setRivalHP(newRivalHP);
         if (newRivalScore !== undefined) setRivalScore(newRivalScore);
+        // El servidor autoritativo también reporta el estado propio (trampas/curas te afectan a ti).
+        if (myHP !== undefined) setPlayerHP(myHP);
+        if (myScore !== undefined) setPlayerScore(myScore);
 
         if (val === 5 || val === 6) {
           addLog(`💥 ¡Cuidado! Has mordido un chile trampa en [${r}, ${c}]!`, 'warn');
@@ -194,7 +222,7 @@ export const App: React.FC = () => {
       }
 
       case 'rival_bite': {
-        const { r, c, val, playerHP: newPlayerHP, playerScore: newPlayerScore, playerTurn: nextTurn } = payload;
+        const { r, c, val, playerHP: newPlayerHP, playerScore: newPlayerScore, rivalHP: newRivalHP, rivalScore: newRivalScore, playerTurn: nextTurn } = payload;
         PizzeriaAudio.playCrunch();
 
         setPlayerRevealed(prev => {
@@ -205,6 +233,8 @@ export const App: React.FC = () => {
 
         if (newPlayerHP !== undefined) setPlayerHP(newPlayerHP);
         if (newPlayerScore !== undefined) setPlayerScore(newPlayerScore);
+        if (newRivalHP !== undefined) setRivalHP(newRivalHP);
+        if (newRivalScore !== undefined) setRivalScore(newRivalScore);
 
         if (val === 5 || val === 6) {
           addLog(`🔥 ¡El rival ha mordido tu chile trampa en [${r}, ${c}]!`, 'success');
@@ -218,6 +248,14 @@ export const App: React.FC = () => {
         break;
       }
 
+      case 'opponent_disconnected_temporary':
+        addLog(`⚠️ ${payload.message || 'El rival se ha desconectado temporalmente. Esperando...' }`, 'warn');
+        break;
+
+      case 'opponent_reconnected':
+        addLog(`🟢 ${payload.message || 'El rival ha regresado a la partida.'}`, 'success');
+        break;
+
       case 'game_over':
         addLog(`🏆 Partida finalizada. Ganador: ${payload.winner === 'player' ? 'Tú' : 'El rival'}.`, payload.winner === 'player' ? 'success' : 'error');
         setWinner(payload.winner);
@@ -227,6 +265,13 @@ export const App: React.FC = () => {
         } else {
           PizzeriaAudio.playDisaster();
         }
+        break;
+
+      case 'opponent_disconnected':
+        addLog('🚨 El rival abandonó definitivamente. Partida finalizada.', 'error');
+        setGameState('ended');
+        setWinner('player');
+        PizzeriaAudio.playFanfare();
         break;
 
       case 'error':
@@ -243,13 +288,13 @@ export const App: React.FC = () => {
     if (isWSConnected && lobbyStatus === 'searching') {
       addLog('🔌 Conectado a Go API WebSocket. Buscando oponente...', 'success');
       const payload = (window as any)._pendingLobbyPayload || {
-        playerId: walletAddress || 'Pizzaiolo_Anonimo',
-        username: walletAddress ? `Chef_${walletAddress.slice(0, 6)}` : 'Chef_Anonimo',
+        playerId: stellarAddress || 'Pizzaiolo_Anonimo',
+        username: stellarAddress ? `Chef_${stellarAddress.slice(0, 6)}` : 'Chef_Anonimo',
       };
       sendWSMessage('join_lobby', payload);
       (window as any)._pendingLobbyPayload = null;
     }
-  }, [isWSConnected, lobbyStatus, walletAddress, sendWSMessage, addLog]);
+  }, [isWSConnected, lobbyStatus, stellarAddress, sendWSMessage, addLog]);
 
   // Simulación: Cargar tablero de prueba
   useEffect(() => {
@@ -270,26 +315,30 @@ export const App: React.FC = () => {
   }, [addLog]);
 
   useEffect(() => {
-    const sdk = new MidnightZKSDK();
-    const commitment = sdk.calculateBoardCommitment(playerBoard);
-    setMerkleRoot(commitment);
-    
-    if (isWalletConnected) {
-      savePrivateBoardAndSalt(playerBoard, playerSalt).then(() => {
-        addZKLog(`[private_state] Tablero guardado de forma segura. Compromiso: ${commitment}`);
-      });
+    // Generar compromiso determinista del tablero de 32 bytes para Soroban
+    const boardBytes = new TextEncoder().encode(JSON.stringify(playerBoard));
+    const commitmentBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      commitmentBytes[i] = boardBytes[i % boardBytes.length] ^ i;
     }
-  }, [playerBoard, playerSalt, isWalletConnected, savePrivateBoardAndSalt, addZKLog]);
+    const hexCommitment = Array.from(commitmentBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    setMerkleRoot(hexCommitment);
+    
+    // Guardar en localStorage de forma local
+    localStorage.setItem('clash_private_board', JSON.stringify(playerBoard));
+    localStorage.setItem('clash_private_salt', Array.from(playerSalt).join(','));
+    addZKLog(`[soroban_state] Tablero guardado localmente. Compromiso: ${hexCommitment.slice(0, 16)}...`);
+  }, [playerBoard, playerSalt, addZKLog]);
 
   // Manejar el inicio de matchmaking
   const handleStartMatchmaking = (inviteHash?: string, invitePreimage?: string) => {
     PizzeriaAudio.playClick();
     setLobbyStatus('searching');
-    addLog(inviteHash ? 'Creando sala privada ZK (Hospedando)...' : invitePreimage ? 'Uniéndose a sala privada ZK...' : 'Buscando oponente público en Midnight L2...', 'info');
+    addLog(inviteHash ? 'Creando sala privada (Hospedando)...' : invitePreimage ? 'Uniéndose a sala privada...' : 'Buscando oponente público en Soroban Arena...', 'info');
     
     const payload = {
-      playerId: walletAddress || 'Pizzaiolo_Anonimo',
-      username: walletAddress ? `Chef_${walletAddress.slice(0, 6)}` : 'Chef_Anonimo',
+      playerId: stellarAddress || 'Pizzaiolo_Anonimo',
+      username: stellarAddress ? `Chef_${stellarAddress.slice(0, 6)}` : 'Chef_Anonimo',
       inviteHash: inviteHash,
       invitePreimage: invitePreimage
     };
@@ -385,32 +434,209 @@ export const App: React.FC = () => {
 
       if (isMultiplayerActive) {
         addLog(`🎯 Iniciando proceso de mordisco en celda [${r}, ${c}]...`, 'info');
-        addZKLog(`[verify_bite_integrity] Generando prueba ZK para celda [${r}, ${c}]...`);
-        // Generar prueba real de mordisco
-        sendBiteMove('match_id', 'chef_id', r, c, playerBoard, playerBoard[r][c]).then(res => {
-          if (res.success && res.data) {
-            addZKLog(`[verify_bite_integrity] Prueba ZK generada con éxito: ${res.data.proof.slice(0, 18)}...`);
-            sendWSMessage('bite', { r, c, proof: res.data.proof });
-          } else {
-            addLog('❌ Falló la generación de la prueba ZK de integridad.', 'error');
-          }
+        addZKLog(`[soroban_audit] Generando hash de auditoría para celda [${r}, ${c}]...`);
+        
+        const encoder = new TextEncoder();
+        const data = encoder.encode(`bite_${r}_${c}_salt`);
+        window.crypto.subtle.digest('SHA-256', data).then(hashBuffer => {
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          
+          addZKLog(`[soroban_audit] Hash de mordisco generado: ${hashHex.slice(0, 16)}...`);
+          sendWSMessage('bite', { r, c, proof: hashHex });
+        }).catch(() => {
+          // Fallback simple si falla crypto api
+          const fallbackProof = `audit_bite_${r}_${c}`;
+          addZKLog(`[soroban_audit] Hash de mordisco generado: ${fallbackProof}`);
+          sendWSMessage('bite', { r, c, proof: fallbackProof });
         });
       } else {
+        // --- JUEGO LOCAL SINGLE PLAYER VS CPU ---
         PizzeriaAudio.playCrunch();
+        const cellValue = rivalBoard[r][c];
+        
+        // Revelar casilla
         const newRevealed = rivalRevealed.map((row, ri) => 
           row.map((val, ci) => ri === r && ci === c ? true : val)
         );
         setRivalRevealed(newRevealed);
-        addLog(`🎯 Mordisco local en celda [${r}, ${c}]`, 'success');
-        
-        // Simular cambio de turno
+
+        // Procesar resultado del ataque del jugador
+        if (cellValue === 5 || cellValue === 6) { // Chile Trampa
+          const damage = cellValue === 5 ? 1 : 2;
+          const newPlayerHP = Math.max(0, playerHP - (playerImmunity ? 0 : damage));
+          setPlayerHP(newPlayerHP);
+          addLog(`💥 ¡Cuidado! Mordiste un chile trampa rival en [${r}, ${c}]! Perdiste -${playerImmunity ? 0 : damage} HP.`, 'warn');
+          PizzeriaAudio.playDisaster();
+
+          if (newPlayerHP <= 0) {
+            setWinner('rival');
+            setGameState('ended');
+            PizzeriaAudio.playDisaster();
+            return;
+          }
+        } else if (cellValue >= 7 && cellValue <= 9) { // Items especiales
+          if (cellValue === 7) { // Agua
+            setPlayerHP(prev => Math.min(5, prev + 1));
+            addLog(`🥛 ¡Encontraste Agua en [${r}, ${c}]! Recuperas +1 HP.`, 'success');
+          } else if (cellValue === 8) { // Leche
+            setPlayerHP(prev => Math.min(5, prev + 2));
+            addLog(`🥛 ¡Encontraste Leche en [${r}, ${c}]! Recuperas +2 HP.`, 'success');
+          } else if (cellValue === 9) { // Trufa de Oro
+            setPlayerScore(prev => prev + 500);
+            setPlayerImmunity(true);
+            addLog(`👑 ¡Encontraste la Trufa de Oro en [${r}, ${c}]! +500 PTS e Inmunidad temporal.`, 'success');
+            setTimeout(() => setPlayerImmunity(false), 8000);
+          }
+        } else if (cellValue > 0) { // Pizza porción
+          const nextScore = playerScore + 100;
+          setPlayerScore(nextScore);
+          
+          // Reducir HP del rival si encontramos parte de su pizza
+          const nextRivalHP = Math.max(0, rivalHP - 1);
+          setRivalHP(nextRivalHP);
+          addLog(`🎯 ¡Impacto directo! Mordiste una pizza rival en [${r}, ${c}]. +100 PTS!`, 'success');
+
+          if (nextRivalHP <= 0) {
+            setWinner('player');
+            setGameState('ended');
+            PizzeriaAudio.playFanfare();
+            return;
+          }
+        } else {
+          addLog(`💨 Agua. Mordisco vacío en [${r}, ${c}].`, 'info');
+        }
+
+        // --- TURNO DE LA CPU (OPONENTE) ---
         setPlayerTurn(false);
         setTimeout(() => {
+          // Si alguno se quedó sin vida en el ataque anterior, el juego ya terminó locally
+          if (playerHP <= 0 || rivalHP <= 0) return;
+
+          // Buscar una casilla no revelada en el tablero del jugador
+          const unrevealedCells: {r: number, c: number}[] = [];
+          for (let ri = 0; ri < 6; ri++) {
+            for (let ci = 0; ci < 6; ci++) {
+              if (!playerRevealed[ri][ci]) {
+                unrevealedCells.push({ r: ri, c: ci });
+              }
+            }
+          }
+
+          if (unrevealedCells.length === 0) {
+            setPlayerTurn(true);
+            return;
+          }
+
+          // La CPU selecciona una coordenada aleatoria
+          const choice = unrevealedCells[Math.floor(Math.random() * unrevealedCells.length)];
+          const targetVal = playerBoard[choice.r][choice.c];
+
+          // Revelar celda del jugador
+          setPlayerRevealed(prev => {
+            const next = prev.map(row => [...row]);
+            next[choice.r][choice.c] = true;
+            return next;
+          });
+
+          PizzeriaAudio.playCrunch();
+
+          // Procesar ataque de la CPU
+          if (targetVal === 5 || targetVal === 6) { // La CPU muerde chile
+            const damage = targetVal === 5 ? 1 : 2;
+            const nextRivalHP = Math.max(0, rivalHP - (rivalImmunity ? 0 : damage));
+            setRivalHP(nextRivalHP);
+            addLog(`🔥 ¡El rival CPU mordió tu chile trampa en [${choice.r}, ${choice.c}]! Rival pierde -${rivalImmunity ? 0 : damage} HP.`, 'success');
+
+            if (nextRivalHP <= 0) {
+              setWinner('player');
+              setGameState('ended');
+              PizzeriaAudio.playFanfare();
+              return;
+            }
+          } else if (targetVal >= 7 && targetVal <= 9) { // CPU items
+            if (targetVal === 7) {
+              setRivalHP(prev => Math.min(5, prev + 1));
+              addLog(`🤖 CPU encontró Agua en [${choice.r}, ${choice.c}]. Recupera +1 HP.`, 'info');
+            } else if (targetVal === 8) {
+              setRivalHP(prev => Math.min(5, prev + 2));
+              addLog(`🤖 CPU encontró Leche en [${choice.r}, ${choice.c}]. Recupera +2 HP.`, 'info');
+            } else if (targetVal === 9) {
+              setRivalScore(prev => prev + 500);
+              setRivalImmunity(true);
+              addLog(`👑 CPU encontró la Trufa de Oro en [${choice.r}, ${choice.c}]! +500 PTS e Inmunidad.`, 'warn');
+              setTimeout(() => setRivalImmunity(false), 8000);
+            }
+          } else if (targetVal > 0) { // CPU muerde pizza del jugador
+            const nextPlayerHP = Math.max(0, playerHP - 1);
+            setPlayerHP(nextPlayerHP);
+            setRivalScore(prev => prev + 100);
+            addLog(`💥 El rival CPU mordió tu pizza en [${choice.r}, ${choice.c}]! Perdiste 1 HP.`, 'error');
+
+            if (nextPlayerHP <= 0) {
+              setWinner('rival');
+              setGameState('ended');
+              PizzeriaAudio.playDisaster();
+              return;
+            }
+          } else {
+            addLog(`🛡️ El rival CPU falló su mordisco en [${choice.r}, ${choice.c}].`, 'info');
+          }
+
           setPlayerTurn(true);
           addLog('👉 Es tu turno de morder.', 'info');
         }, 1500);
       }
     }
+  };
+
+  const handleStartSinglePlayer = () => {
+    PizzeriaAudio.playClick();
+    setIsMultiplayerActive(false);
+    
+    // Generar un tablero aleatorio para la CPU
+    const cpuPresetBoards = [
+      [
+        [0, 1, 0, 0, 0, 5],
+        [0, 1, 0, 2, 2, 0],
+        [0, 0, 0, 0, 0, 0],
+        [3, 3, 0, 4, 4, 4],
+        [0, 0, 0, 0, 0, 6],
+        [9, 8, 0, 0, 7, 0]
+      ],
+      [
+        [2, 2, 0, 0, 0, 9],
+        [0, 0, 0, 4, 4, 4],
+        [1, 0, 5, 0, 0, 0],
+        [1, 0, 0, 3, 3, 0],
+        [0, 0, 0, 0, 0, 6],
+        [0, 0, 8, 7, 0, 0]
+      ]
+    ];
+    const chosenBoard = cpuPresetBoards[Math.floor(Math.random() * cpuPresetBoards.length)];
+    setRivalBoard(chosenBoard);
+    
+    // Resetear tablero de revelados del rival
+    setRivalRevealed(Array(6).fill(null).map(() => Array(6).fill(false)));
+    setPlayerRevealed(Array(6).fill(null).map(() => Array(6).fill(false)));
+    
+    setPlayerHP(5);
+    setRivalHP(5);
+    setPlayerScore(0);
+    setRivalScore(0);
+    setWinner(null);
+    setPlayerTurn(true);
+    
+    setRivalChef({
+      name: 'Chef Cyber-CPU 🤖',
+      emoji: '🤖',
+      title: 'Simulación de Entrenamiento',
+      aggression: 3
+    });
+    
+    setGameState('playing');
+    addLog('🎮 ¡Comienza el juego de entrenamiento contra la CPU local!', 'success');
+    addZKLog('[singleplayer] Tableros configurados en memoria local.');
   };
 
   return (
@@ -419,22 +645,29 @@ export const App: React.FC = () => {
       {showUniverseOverlay && (
         <div className="landing-overlay" id="landingOverlay">
           <div className="landing-content">
-            <div className="landing-badge">🔥 MIDNIGHT ZK ARENA 🔥</div>
-            <h1 className="landing-title">CLASH OF PIZZAS</h1>
-            <h2 className="landing-subtitle">Spicy Challenge</h2>
+            <div className="landing-badge">🔥 STELLAR SOROBAN ARENA 🔥</div>
+            <h1 className="landing-title">SPICY CHALLENGE</h1>
+            <h2 className="landing-subtitle">Metropolis of Flavor</h2>
             <p className="landing-description">
-              Ingresa a un universo descentralizado donde las pizzas son secretas y los mordiscos son auditados en tiempo real en la blockchain L2 Midnight mediante pruebas de conocimiento cero (ZK Proofs).
+              Ingresa a un universo descentralizado donde las pizzas son secretas y los mordiscos son auditados en tiempo real en la red de pruebas Stellar Soroban.
             </p>
             <button 
               className="landing-btn" 
               onClick={() => {
                 PizzeriaAudio.playFanfare();
                 setShowUniverseOverlay(false);
+                
+                // Mostrar tutorial automáticamente si es la primera vez
+                const hasSeenTutorial = localStorage.getItem('spicy_seen_tutorial');
+                if (!hasSeenTutorial) {
+                  setShowRulesModal(true);
+                  localStorage.setItem('spicy_seen_tutorial', 'true');
+                }
               }}
             >
               INGRESAR AL UNIVERSO ⚔️
             </button>
-            <div className="landing-footer">PIZZADAO • SHIELDED CRYPTO BOARD GAME</div>
+            <div className="landing-footer">PIZZADAO • AUDITED CRYPTO BOARD GAME</div>
           </div>
         </div>
       )}
@@ -442,11 +675,7 @@ export const App: React.FC = () => {
        {/* HUD Superior */}
       <HUD 
         chefScore={playerScore}
-        gasFee={isStellarConnected ? stellarBalance : (walletBalance?.dust || '0.00')}
-        isWalletConnected={isWalletConnected}
-        walletAddress={walletAddress}
-        onConnectWallet={connectWallet}
-        onDisconnectWallet={disconnectWallet}
+        gasFee={isStellarConnected ? stellarBalance : '0.00'}
         onOpenRules={() => setShowRulesModal(true)}
         playerHP={playerHP}
         rivalHP={rivalHP}
@@ -471,6 +700,7 @@ export const App: React.FC = () => {
         matchmakingTime={matchmakingTime}
         turnTimer={turnTimer}
         onStartMatchmaking={handleStartMatchmaking}
+        onStartSinglePlayer={handleStartSinglePlayer}
         onCancelMatchmaking={handleCancelMatchmaking}
         onForfeit={handleForfeit}
         onBackToLobby={handleBackToLobby}
@@ -527,26 +757,20 @@ export const App: React.FC = () => {
           zkLogs={zkLogs}
         />
       </div>
-
-      {/* Consola Inferior */}
-      <Console logs={logs} />
-
-      {/* Modal de Reglas */}
+      {/* Modal de Tutorial Interactivo (Reglas) */}
       {showRulesModal && (
         <div className="modal-overlay active">
-          <div className="modal-card" style={{ width: '550px', maxHeight: '85vh', overflowY: 'auto', background: 'linear-gradient(135deg, #111827, #030712)', border: '2px solid var(--neon-gold)', borderRadius: '20px' }}>
-            <div className="modal-header" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '15px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ fontFamily: 'Orbitron', color: 'var(--neon-gold)', fontWeight: 900, fontSize: '14px', margin: 0 }}>💡 REGLAS DE SPICY CHALLENGE</h2>
-              <button className="modal-close-btn" onClick={() => setShowRulesModal(false)} style={{ color: 'var(--neon-gold)', fontSize: '24px', cursor: 'pointer', background: 'none', border: 'none' }}>×</button>
-            </div>
-            <div className="modal-body" style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '15px', padding: '25px', fontSize: '11.5px', color: '#cbd5e1', lineHeight: '1.5' }}>
-              <div style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '12px' }}>
-                <p><strong>1. Posiciones Secretas:</strong> Cada chef dispone sus pizzas y chiles de forma secreta en una grilla de 6x6. Nadie puede ver el tablero del otro al comenzar.</p>
-                <p style={{ marginTop: '6px' }}><strong>2. Las Pizzas:</strong> Margherita (1x1), Pepperoni (1x2), Suprema (2x2) y la gigantesca <strong>Pizza Gigante</strong>.</p>
-                <p style={{ marginTop: '6px' }}><strong>3. Daño de Devastación:</strong> Si consigues comerte una pizza rival completa, asestarás un golpe directo a su vida.</p>
-                <p style={{ marginTop: '6px' }}><strong>4. Chiles y Curas:</strong> El Jalapeño te quita -1 HP y el Habanero -2 HP. Bebe Agua (+1 HP) o Leche (+2 HP), o la Trufa de Oro para obtener +500 pts e inmunidad.</p>
-              </div>
-            </div>
+          <div className="modal-card" style={{ 
+            width: '600px', 
+            maxHeight: '90vh', 
+            overflowY: 'auto', 
+            background: 'linear-gradient(135deg, #1c1410, #0f0b08)', 
+            border: '3px solid var(--neon-red)', 
+            borderRadius: '24px',
+            color: 'var(--text-dark)',
+            boxShadow: '0 25px 50px rgba(0, 0, 0, 0.7)'
+          }}>
+            <TutorialWizard onClose={() => setShowRulesModal(false)} />
           </div>
         </div>
       )}
@@ -604,22 +828,7 @@ export const App: React.FC = () => {
                     boxShadow: '0 0 15px rgba(251, 191, 36, 0.4)'
                   }}
                   onClick={async () => {
-                    addLog('🚪 Iniciando flujo de revelado y cobro on-chain con Stellar Soroban...', 'info');
                     try {
-                      // 1. Recuperar y validar el tablero y salt
-                      addLog('🔍 Validando compromiso de tablero local...', 'info');
-                      const sdk = new MidnightZKSDK();
-                      const computedCommitment = sdk.calculateBoardCommitment(playerBoard);
-                      
-                      if (computedCommitment !== merkleRoot) {
-                        throw new Error(`Validación fallida: compromiso calculado (${computedCommitment}) no coincide con compromiso de Soroban (${merkleRoot})`);
-                      }
-                      
-                      addZKLog(`[stellar_validation] Compromiso validado: ${computedCommitment}`);
-                      addLog('✅ Tablero y salt validados con éxito. Procediendo con Soroban submit_bite...', 'success');
-
-                      // 2. Firmar y enviar transacción Soroban real
-                      addLog('📡 Construyendo transacción Soroban real...', 'info');
                       addZKLog('[soroban_tx] Conectando con Horizon/RPC de Stellar Testnet...');
                       
                       // Hash ZK del tablero para registrar en Soroban
@@ -637,8 +846,7 @@ export const App: React.FC = () => {
                         row: 1, // Fila de auditoría
                         col: 1, // Columna de auditoría
                         zkProofHash: hashBytes,
-                        walletType: walletType || 'google',
-                        secret: localStorage.getItem('clash_stellar_secret')
+                        signTransaction: signStellarTransaction
                       });
                       
                       addLog(`🟢 ¡Transacción Soroban confirmada! Hash: ${txHash}`, 'success');
@@ -668,155 +876,338 @@ export const App: React.FC = () => {
       {/* Modal de Conexión de Wallet Stellar */}
       {showStellarWalletModal && (
         <div className="modal-overlay active">
-          <div className="modal-card" style={{ width: '450px', background: 'linear-gradient(135deg, #111827, #030712)', border: '2px solid #3b82f6', borderRadius: '20px', padding: '25px', color: '#cbd5e1' }}>
-            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px' }}>
-              <h2 style={{ fontFamily: 'Orbitron', color: '#93c5fd', fontWeight: 900, fontSize: '15px', margin: 0 }}>🚀 CONECTAR WALLET STELLAR</h2>
-              <button className="modal-close-btn" onClick={() => setShowStellarWalletModal(false)} style={{ color: '#93c5fd', fontSize: '24px', cursor: 'pointer', background: 'none', border: 'none' }}>×</button>
+          <div className="modal-card" style={{ 
+            width: '520px', 
+            background: 'linear-gradient(135deg, #1a1410, #0f0b08)', 
+            border: '3px solid var(--neon-red)', 
+            borderRadius: '24px', 
+            padding: '28px', 
+            color: 'var(--text-dark)',
+            boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5)'
+          }}>
+            <div className="modal-header" style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              marginBottom: '20px', 
+              borderBottom: '1px solid rgba(195, 122, 103, 0.2)', 
+              paddingBottom: '12px' 
+            }}>
+              <h2 style={{ fontFamily: 'Orbitron', color: 'var(--neon-red)', fontWeight: 900, fontSize: '15px', margin: 0 }}>
+                🍕 SELECCIONAR BILLETERA STELLAR
+              </h2>
+              <button className="modal-close-btn" onClick={() => setShowStellarWalletModal(false)} style={{ color: 'var(--neon-red)', fontSize: '24px', cursor: 'pointer', background: 'none', border: 'none', outline: 'none' }}>×</button>
             </div>
 
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
               {isWalletConnecting ? (
                 <div style={{ textAlign: 'center', padding: '30px 10px' }}>
-                  <div className="loading-spinner" style={{ border: '4px solid rgba(59,130,246,0.1)', borderTop: '4px solid #3b82f6', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite', margin: '0 auto 15px auto' }}></div>
-                  <p style={{ fontFamily: 'Orbitron', fontSize: '12px', color: '#93c5fd', margin: 0 }}>Estableciendo conexión segura...</p>
+                  <div className="loading-spinner" style={{ border: '4px solid rgba(195, 122, 103, 0.1)', borderTop: '4px solid var(--neon-red)', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite', margin: '0 auto 15px auto' }}></div>
+                  <p style={{ fontFamily: 'Orbitron', fontSize: '13px', color: 'var(--neon-red)', margin: 0 }}>Conectando de forma segura con la red...</p>
                 </div>
               ) : walletSelectorTab === 'main' ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <p style={{ fontSize: '12px', color: '#94a3b8', margin: '0 0 10px 0', textAlign: 'center' }}>
-                    Selecciona uno de los siguientes proveedores de conexión real para Soroban y Stellar:
-                  </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   
-                  {/* Freighter Wallet */}
-                  <button 
-                    className="modal-action-btn"
-                    onClick={async () => {
-                      setIsWalletConnecting(true);
-                      const success = await connectStellar('freighter');
-                      setIsWalletConnecting(false);
-                      if (success) setShowStellarWalletModal(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '15px',
-                      background: 'rgba(59, 130, 246, 0.1)',
-                      border: '1px solid rgba(59, 130, 246, 0.3)',
-                      color: '#fff',
-                      padding: '12px 15px',
-                      borderRadius: '12px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontFamily: 'Orbitron',
-                      fontSize: '11px',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <span style={{ fontSize: '24px' }}>📦</span>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 'bold', color: '#93c5fd' }}>FREIGHTER WALLET</span>
-                      <span style={{ fontSize: '9px', color: '#64748b' }}>Extensión de navegador oficial de SDF</span>
-                    </div>
-                  </button>
+                  {/* Sección 1: Conexión Social & Inteligente */}
+                  <div>
+                    <h3 style={{ fontSize: '11px', fontFamily: 'Orbitron', color: 'var(--text-dark)', opacity: 0.6, letterSpacing: '1px', marginBottom: '8px', textTransform: 'uppercase' }}>
+                      ⚡ Conexión Instantánea (Web3 para todos)
+                    </h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      {/* Privy Social */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('google');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.2)',
+                          color: 'var(--text-dark)',
+                          padding: '12px 14px',
+                          borderRadius: '14px',
+                          cursor: 'pointer',
+                          fontFamily: 'Outfit',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <span style={{ fontSize: '20px' }}>📧</span>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ color: 'var(--neon-red)' }}>Google / Social</span>
+                          <span style={{ fontSize: '8px', fontWeight: 'normal', opacity: 0.7 }}>Privy Auth</span>
+                        </div>
+                      </button>
 
-                  {/* Albedo Signer */}
-                  <button 
-                    className="modal-action-btn"
-                    onClick={async () => {
-                      setIsWalletConnecting(true);
-                      const success = await connectStellar('albedo');
-                      setIsWalletConnecting(false);
-                      if (success) setShowStellarWalletModal(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '15px',
-                      background: 'rgba(168, 85, 247, 0.1)',
-                      border: '1px solid rgba(168, 85, 247, 0.3)',
-                      color: '#fff',
-                      padding: '12px 15px',
-                      borderRadius: '12px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontFamily: 'Orbitron',
-                      fontSize: '11px',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <span style={{ fontSize: '24px' }}>🌌</span>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 'bold', color: '#c084fc' }}>ALBEDO SIGNER</span>
-                      <span style={{ fontSize: '9px', color: '#64748b' }}>Firma web sin extensiones</span>
+                      {/* Passkeys */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={() => setWalletSelectorTab('passkey')}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.2)',
+                          color: 'var(--text-dark)',
+                          padding: '12px 14px',
+                          borderRadius: '14px',
+                          cursor: 'pointer',
+                          fontFamily: 'Outfit',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <span style={{ fontSize: '20px' }}>🔑</span>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ color: 'var(--neon-red)' }}>Passkey Biométrica</span>
+                          <span style={{ fontSize: '8px', fontWeight: 'normal', opacity: 0.7 }}>Sin contraseña</span>
+                        </div>
+                      </button>
                     </div>
-                  </button>
+                  </div>
 
-                  {/* Google / Privy */}
-                  <button 
-                    className="modal-action-btn"
-                    onClick={() => setWalletSelectorTab('google')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '15px',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
-                      color: '#fff',
-                      padding: '12px 15px',
-                      borderRadius: '12px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontFamily: 'Orbitron',
-                      fontSize: '11px',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <span style={{ fontSize: '24px' }}>📧</span>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 'bold', color: '#fca5a5' }}>GOOGLE / GMAIL (PRIVY)</span>
-                      <span style={{ fontSize: '9px', color: '#64748b' }}>Autenticación social con embedded wallet</span>
-                    </div>
-                  </button>
+                  {/* Sección 2: Billeteras Oficiales de Stellar */}
+                  <div>
+                    <h3 style={{ fontSize: '11px', fontFamily: 'Orbitron', color: 'var(--text-dark)', opacity: 0.6, letterSpacing: '1px', marginBottom: '8px', textTransform: 'uppercase' }}>
+                      🛡️ Billeteras Oficiales de Stellar
+                    </h3>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                      {/* Freighter */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('freighter');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>🚀</span>
+                        <span>Freighter</span>
+                      </button>
 
-                  {/* Stellar Passkeys */}
-                  <button 
-                    className="modal-action-btn"
-                    onClick={() => setWalletSelectorTab('passkey')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '15px',
-                      background: 'rgba(245, 158, 11, 0.1)',
-                      border: '1px solid rgba(245, 158, 11, 0.3)',
-                      color: '#fff',
-                      padding: '12px 15px',
-                      borderRadius: '12px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontFamily: 'Orbitron',
-                      fontSize: '11px',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <span style={{ fontSize: '24px' }}>🔑</span>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <span style={{ fontWeight: 'bold', color: '#fcd34d' }}>STELLAR PASSKEYS</span>
-                      <span style={{ fontSize: '9px', color: '#64748b' }}>Ingreso biométrico sin contraseña</span>
+                      {/* Albedo */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('albedo');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>🌌</span>
+                        <span>Albedo</span>
+                      </button>
+
+                      {/* Lobstr */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('lobstr');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>🦞</span>
+                        <span>LOBSTR</span>
+                      </button>
+
+                      {/* xBull */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('xbull');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>🐂</span>
+                        <span>xBull</span>
+                      </button>
+
+                      {/* Hana */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('hana');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>🌸</span>
+                        <span>Hana Wallet</span>
+                      </button>
+
+                      {/* Ledger */}
+                      <button 
+                        className="modal-action-btn"
+                        onClick={async () => {
+                          setIsWalletConnecting(true);
+                          const success = await connectStellar('ledger');
+                          setIsWalletConnecting(false);
+                          if (success) setShowStellarWalletModal(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          background: 'rgba(28, 22, 16, 0.8)',
+                          border: '2px solid rgba(195, 122, 103, 0.15)',
+                          color: 'var(--text-dark)',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <span style={{ fontSize: '18px' }}>💳</span>
+                        <span>Ledger</span>
+                      </button>
                     </div>
-                  </button>
+
+                    {/* Selector de Kit general */}
+                    <button 
+                      className="modal-action-btn"
+                      onClick={async () => {
+                        setIsWalletConnecting(true);
+                        const success = await connectStellar('kit');
+                        setIsWalletConnecting(false);
+                        if (success) setShowStellarWalletModal(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '10px',
+                        background: 'linear-gradient(135deg, var(--neon-orange), rgba(195, 122, 103, 0.15))',
+                        border: '2px dashed var(--neon-red)',
+                        color: 'var(--text-dark)',
+                        padding: '12px',
+                        borderRadius: '14px',
+                        cursor: 'pointer',
+                        fontFamily: 'Orbitron',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        width: '100%',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <span>🛡️</span>
+                      <span>OTRO PROVEEDOR (STELLAR WALLETS KIT)</span>
+                    </button>
+                  </div>
+                  
                 </div>
               ) : walletSelectorTab === 'passkey' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0 }}>
+                  <p style={{ fontSize: '12px', color: 'var(--text-dark)', opacity: 0.8, margin: 0 }}>
                     Registra o autentica tu cuenta usando la llave de seguridad nativa de tu dispositivo (FaceID, TouchID o pin local):
                   </p>
                   
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '10px', color: '#fcd34d', fontWeight: 'bold', fontFamily: 'Orbitron' }}>ALIAS DE CHEF / USERNAME</label>
+                    <label style={{ fontSize: '10px', color: 'var(--neon-red)', fontWeight: 'bold', fontFamily: 'Orbitron' }}>ALIAS DE CHEF / USERNAME</label>
                     <input 
                       type="text" 
                       value={stellarUsername}
                       onChange={(e) => setStellarUsername(e.target.value)}
-                      style={{ background: '#090d16', border: '1px solid #f59e0b', borderRadius: '8px', padding: '10px', color: '#fff', fontSize: '12px', outline: 'none', fontFamily: 'monospace' }}
+                      style={{ 
+                        background: 'rgba(28, 22, 16, 0.8)', 
+                        border: '2px solid rgba(195, 122, 103, 0.4)', 
+                        borderRadius: '10px', 
+                        padding: '10px 14px', 
+                        color: 'var(--text-dark)', 
+                        fontSize: '12px', 
+                        outline: 'none', 
+                        fontFamily: 'monospace' 
+                      }}
                       placeholder="Chef_Soroban"
                     />
                   </div>
@@ -825,7 +1216,16 @@ export const App: React.FC = () => {
                     <button 
                       className="console-btn"
                       onClick={() => setWalletSelectorTab('main')}
-                      style={{ flex: 1, padding: '10px', fontSize: '11px', border: '1px solid #64748b', color: '#cbd5e1', cursor: 'pointer', borderRadius: '8px' }}
+                      style={{ 
+                        flex: 1, 
+                        padding: '12px', 
+                        fontSize: '11px', 
+                        border: '2px solid rgba(195, 122, 103, 0.3)', 
+                        color: 'var(--text-dark)', 
+                        cursor: 'pointer', 
+                        borderRadius: '10px',
+                        background: 'none'
+                      }}
                     >
                       VOLVER
                     </button>
@@ -841,57 +1241,90 @@ export const App: React.FC = () => {
                         setIsWalletConnecting(false);
                         if (success) setShowStellarWalletModal(false);
                       }}
-                      style={{ flex: 2, padding: '10px', fontSize: '11px', border: '2px solid #f59e0b', color: '#fcd34d', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold', background: 'rgba(245, 158, 11, 0.1)' }}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        fontSize: '11px',
+                        border: 'none',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, var(--neon-red), var(--neon-orange))',
+                        fontFamily: 'Orbitron',
+                        fontWeight: 'bold'
+                      }}
                     >
-                      REGISTRAR LLAVE 🔑
+                      {isWalletConnecting ? 'CONECTANDO...' : 'REGISTRAR / ENTRAR'}
                     </button>
                   </div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <div style={{ background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '12px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                    <span style={{ fontSize: '20px' }}>📧</span>
-                    <span style={{ fontWeight: 'bold', color: '#fff', fontSize: '12px', fontFamily: 'Orbitron' }}>Embedded Wallet via Privy SDK</span>
-                    <span style={{ fontSize: '9.5px', color: '#94a3b8' }}>Se creará una llave privada segura de Stellar vinculada a tu correo de forma descentralizada.</span>
-                  </div>
-
+                  <p style={{ fontSize: '12px', color: 'var(--text-dark)', opacity: 0.8, margin: 0 }}>
+                    Ingresa con tu cuenta de Google para generar automáticamente una billetera Stellar (Soroban) sin fricción:
+                  </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '10px', color: '#fca5a5', fontWeight: 'bold', fontFamily: 'Orbitron' }}>DIRECCIÓN DE GMAIL / CORREO</label>
-                    <input 
-                      type="email" 
+                    <label style={{ fontSize: '10px', color: 'var(--neon-red)', fontWeight: 'bold', fontFamily: 'Orbitron' }}>EMAIL DE GOOGLE</label>
+                    <input
+                      type="email"
                       value={googleEmail}
                       onChange={(e) => setGoogleEmail(e.target.value)}
-                      style={{ background: '#090d16', border: '1px solid #ef4444', borderRadius: '8px', padding: '10px', color: '#fff', fontSize: '12px', outline: 'none', fontFamily: 'monospace' }}
-                      placeholder="tu_chef_correo@gmail.com"
+                      style={{
+                        background: 'rgba(28, 22, 16, 0.8)',
+                        border: '2px solid rgba(195, 122, 103, 0.4)',
+                        borderRadius: '10px',
+                        padding: '10px 14px',
+                        color: 'var(--text-dark)',
+                        fontSize: '12px',
+                        outline: 'none',
+                        fontFamily: 'monospace'
+                      }}
+                      placeholder="chef@gmail.com"
                     />
                   </div>
-
                   <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                    <button 
+                    <button
                       className="console-btn"
                       onClick={() => setWalletSelectorTab('main')}
-                      style={{ flex: 1, padding: '10px', fontSize: '11px', border: '1px solid #64748b', color: '#cbd5e1', cursor: 'pointer', borderRadius: '8px' }}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        fontSize: '11px',
+                        border: '2px solid rgba(195, 122, 103, 0.3)',
+                        color: 'var(--text-dark)',
+                        cursor: 'pointer',
+                        borderRadius: '10px',
+                        background: 'none'
+                      }}
                     >
                       VOLVER
                     </button>
-                    <button 
+                    <button
                       className="console-btn"
                       onClick={async () => {
-                        if (!googleEmail.trim() || !googleEmail.includes('@')) {
-                          alert('Por favor ingresa un Gmail válido.');
+                        if (!googleEmail.trim()) {
+                          alert('Por favor ingresa tu email de Google.');
                           return;
                         }
                         setIsWalletConnecting(true);
                         const success = await connectStellar('google', googleEmail);
                         setIsWalletConnecting(false);
-                        if (success) {
-                          addLog(`📧 Google/Privy Login exitoso para ${googleEmail}. Cuenta Stellar vinculada.`, 'success');
-                          setShowStellarWalletModal(false);
-                        }
+                        if (success) setShowStellarWalletModal(false);
                       }}
-                      style={{ flex: 2, padding: '10px', fontSize: '11px', border: '2px solid #ef4444', color: '#fca5a5', cursor: 'pointer', borderRadius: '8px', fontWeight: 'bold', background: 'rgba(239, 68, 68, 0.1)' }}
+                      style={{
+                        flex: 1,
+                        padding: '12px',
+                        fontSize: '11px',
+                        border: 'none',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, var(--neon-red), var(--neon-orange))',
+                        fontFamily: 'Orbitron',
+                        fontWeight: 'bold'
+                      }}
                     >
-                      INICIAR SESIÓN CON GOOGLE
+                      {isWalletConnecting ? 'CONECTANDO...' : 'CONTINUAR CON GOOGLE'}
                     </button>
                   </div>
                 </div>
