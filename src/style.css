@@ -66,7 +66,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: radial-gradient(circle at center, rgba(17, 24, 39, 0.4) 0%, rgba(10, 8, 5, 0.92) 75%), 
+  background: radial-gradient(circle at center, rgba(15, 11, 8, 0.4) 0%, #0f0b08 95%), 
               url('/cyberpunk_pizzeria_arena.png') no-repeat center center;
   background-size: cover;
   z-index: 999;
@@ -86,14 +86,13 @@ body {
 
 .landing-content {
   max-width: 650px;
-  background: rgba(17, 24, 39, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 11, 8, 0.95);
+  border: 1px solid rgba(232, 132, 90, 0.25);
   border-radius: 24px;
   padding: 40px;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 
-              0 0 40px rgba(99, 102, 241, 0.15),
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8), 
               inset 0 0 20px rgba(255, 255, 255, 0.02);
   display: flex;
   flex-direction: column;
